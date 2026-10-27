@@ -3,6 +3,7 @@
 //	botvault serve          # serve MCP over HTTP (see .env.example)
 //	botvault bootstrap      # create the botVault root folder in Drive, print its id
 //	botvault mint-token BOT # print a new token + the hash to put in _acl.json
+//	botvault acl grant|revoke|list  # edit _acl.json (see aclcmd.go)
 package main
 
 import (
@@ -33,7 +34,7 @@ const driveScope = "https://www.googleapis.com/auth/drive.file"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: botvault serve | bootstrap | mint-token BOT_ID")
+		fmt.Fprintln(os.Stderr, "usage: botvault serve | bootstrap | mint-token BOT_ID | acl grant|revoke|list")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -46,6 +47,10 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Printf("bot:          %s\ntoken:        %s   (give to the bot; never commit)\ntoken_sha256: %s   (put in _acl.json)\n", os.Args[2], tok, hash)
+	case "acl":
+		if err := aclMain(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	case "bootstrap":
 		if err := bootstrap(context.Background()); err != nil {
 			log.Fatal(err)
@@ -147,11 +152,15 @@ func lockPath(rootID string) string {
 	if p := os.Getenv("BOTVAULT_LOCK_FILE"); p != "" {
 		return p
 	}
+	return "/var/tmp/botvault-" + rootHash(rootID) + ".lock"
+}
+
+func rootHash(rootID string) string {
 	if rootID == "" {
 		rootID = "memory"
 	}
 	sum := sha256.Sum256([]byte(rootID))
-	return "/var/tmp/botvault-" + hex.EncodeToString(sum[:])[:12] + ".lock"
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func serve() error {

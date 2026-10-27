@@ -15,9 +15,11 @@ var ErrRunning = errors.New("another botvault instance holds the lock")
 type Lock struct{ f *os.File }
 
 func Acquire(path string) (*Lock, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	// O_NOFOLLOW: the default lock lives in world-writable /var/tmp, so a
+	// planted symlink must not redirect our truncate+write to another file.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lock file %s: %w", path, err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
