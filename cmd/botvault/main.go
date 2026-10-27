@@ -152,11 +152,15 @@ func lockPath(rootID string) string {
 	if p := os.Getenv("BOTVAULT_LOCK_FILE"); p != "" {
 		return p
 	}
+	return "/var/tmp/botvault-" + rootHash(rootID) + ".lock"
+}
+
+func rootHash(rootID string) string {
 	if rootID == "" {
 		rootID = "memory"
 	}
 	sum := sha256.Sum256([]byte(rootID))
-	return "/var/tmp/botvault-" + hex.EncodeToString(sum[:])[:12] + ".lock"
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func serve() error {

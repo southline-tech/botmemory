@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/radiancelux/botvault/internal/acladmin"
+	"github.com/radiancelux/botvault/internal/instance"
 	"github.com/radiancelux/botvault/internal/store"
 )
 
@@ -109,6 +110,33 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 	return nil
 }
 
+// aclLockPath serialises `botvault acl` runs against one vault on this host
+// (BOTVAULT_ACL_LOCK_FILE overrides). It is separate from the server's
+// instance lock: the server only ever reads _acl.json, so it never needs it.
+// Like the instance lock it covers ONE HOST only; two hosts editing the same
+// ACL rely on the Drive version check plus the re-read verification.
+func aclLockPath(rootID string) string {
+	if p := os.Getenv("BOTVAULT_ACL_LOCK_FILE"); p != "" {
+		return p
+	}
+	return "/var/tmp/botvault-acl-" + rootHash(rootID) + ".lock"
+}
+
+// runACLLocked holds the exclusive (non-blocking, O_NOFOLLOW) ACL lock for
+// the whole command; a concurrent run is refused, not queued.
+func runACLLocked(ctx context.Context, b store.Backend, rootID string, args []string, out io.Writer) error {
+	lp := aclLockPath(rootID)
+	l, err := instance.Acquire(lp)
+	if err != nil {
+		if errors.Is(err, instance.ErrRunning) {
+			return fmt.Errorf("another `botvault acl` run holds %s; wait for it and retry", lp)
+		}
+		return err
+	}
+	defer l.Release()
+	return runACL(ctx, b, args, out)
+}
+
 func aclMain(args []string) error {
 	if os.Getenv("BOTVAULT_ACL_FILE") != "" {
 		return errors.New("BOTVAULT_ACL_FILE is set: `botvault acl` edits _acl.json in the vault backend, not a local file; unset it or edit the local file by hand")
@@ -118,5 +146,9 @@ func aclMain(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runACL(ctx, b, args, os.Stdout)
+	root := os.Getenv("BOTVAULT_DRIVE_ROOT_ID")
+	if os.Getenv("BOTVAULT_BACKEND") == "memory" {
+		root = ""
+	}
+	return runACLLocked(ctx, b, root, args, os.Stdout)
 }

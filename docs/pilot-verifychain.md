@@ -30,11 +30,12 @@ with mode 0600. That file must not already exist, and a symlink there is refused
 only checks the final path component, so the script creates each per-bot
 directory with mode 0700 under your own config dir. If the ACL write fails
 after the token file was written, the CLI re-reads the ACL. If the new hash is
-there, the grant succeeded. If it isn't, the file is removed. If the ACL can't
-be read, the file is kept and the CLI reports the outcome as unknown, giving the
-file path. In that case, check `botvault acl list` before you use or delete the file.
-The CLI prints the path and never the token. `serve` picks the grant up
-within 60s.
+there, the grant succeeded. Otherwise the file is **kept** (Drive may still
+apply the write late) and the CLI reports the outcome as unknown, giving the
+file path. Check `botvault acl list` later: if the bot is listed, the token is
+live; if not, delete the file. Grant and revoke report success only after a
+re-read shows the change. Only one `botvault acl` run per vault at a time on
+this host: a second run is refused while the per-vault ACL lock is held.
 
 ## Getting each bot its token (never via chat)
 

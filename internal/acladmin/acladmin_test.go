@@ -263,12 +263,11 @@ func TestGrantWriteErrorOutcomes(t *testing.T) {
 				}
 			}
 			tp := filepath.Join(dir, "absent.token")
-			if _, err := New(failNoSave{m}).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: tp, Rotate: rotate}); err == nil || errors.Is(err, ErrOutcomeUnknown) {
-				t.Fatalf("want plain write error, got %v", err)
+			// R2-1: hash absent after an ambiguous error => kept, outcome unknown.
+			if _, err := New(failNoSave{m}).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: tp, Rotate: rotate}); !errors.Is(err, ErrOutcomeUnknown) || !strings.Contains(err.Error(), tp) {
+				t.Fatalf("want ErrOutcomeUnknown naming the file, got %v", err)
 			}
-			if _, err := os.Stat(tp); !os.IsNotExist(err) {
-				t.Fatal("token file kept although the hash is absent")
-			}
+			readTok(t, tp) // kept, 0600
 			up := filepath.Join(dir, "unknown.token")
 			_, err := New(&saveThenFail{Backend: m, failWrites: true, readFails: true}).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: up, Rotate: rotate})
 			if !errors.Is(err, ErrOutcomeUnknown) || !strings.Contains(err.Error(), up) {
@@ -360,5 +359,64 @@ func TestWriteSecretFileCleanup(t *testing.T) {
 	}
 	if readTok(t, ok) != "tok" {
 		t.Fatal("content")
+	}
+}
+
+// lateWrite errors on WriteIf without saving, then applies the write after
+// the caller's re-read (Drive applying a request late).
+type lateWrite struct {
+	store.Backend
+	pending func()
+}
+
+func (l *lateWrite) WriteIf(ctx context.Context, p string, d []byte, rev string) error {
+	l.pending = func() { l.Backend.WriteIf(ctx, p, d, rev) }
+	return errors.New("timeout awaiting response")
+}
+
+// R2-1: the write lands after the re-read: the file must still be there and work.
+func TestGrantLateWriteKeepsToken(t *testing.T) {
+	m := store.NewMemory()
+	lw := &lateWrite{Backend: m}
+	tp := filepath.Join(t.TempDir(), "b.token")
+	if _, err := New(lw).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: tp}); !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("want ErrOutcomeUnknown, got %v", err)
+	}
+	if lw.pending == nil {
+		t.Fatal("no write attempted")
+	}
+	lw.pending() // Drive applies it late
+	if id, err := load(t, m).Authenticate(readTok(t, tp)); err != nil || id != "b" {
+		t.Fatalf("late-applied token unusable: %q %v", id, err)
+	}
+}
+
+// dropWrite acknowledges WriteIf but never saves (an overwrite from another host).
+type dropWrite struct{ store.Backend }
+
+func (dropWrite) WriteIf(context.Context, string, []byte, string) error { return nil }
+
+// R2-2: revoke and grant report success only after a re-read confirms the change.
+func TestChangesVerifiedBeforeSuccess(t *testing.T) {
+	m := store.NewMemory()
+	dir := t.TempDir()
+	if _, err := New(m).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: filepath.Join(dir, "b")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(dropWrite{m}).Revoke(ctx, "b", false); !errors.Is(err, ErrNotVerified) {
+		t.Fatalf("unverified revoke reported: %v", err)
+	}
+	if load(t, m).RoleFor("b", "p") != acl.Write {
+		t.Fatal("setup")
+	}
+	if err := New(m).Revoke(ctx, "b", false); err != nil {
+		t.Fatalf("verified revoke: %v", err)
+	}
+	tp := filepath.Join(dir, "c")
+	if _, err := New(dropWrite{m}).Grant(ctx, "c", "p", "read", GrantOpts{TokenOut: tp}); !errors.Is(err, ErrNotVerified) || !strings.Contains(err.Error(), tp) {
+		t.Fatalf("unverified grant reported: %v", err)
+	}
+	if _, err := New(dropWrite{m}).Grant(ctx, "b", "q", "read", GrantOpts{Rotate: false}); err == nil {
+		t.Fatal("grant to revoked bot accepted")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/radiancelux/botvault/internal/acl"
+	"github.com/radiancelux/botvault/internal/instance"
 	"github.com/radiancelux/botvault/internal/store"
 )
 
@@ -54,5 +55,42 @@ func TestACLCommandMemory(t *testing.T) {
 	}
 	if err := runACL(ctx, m, []string{"grant", "x", "p", "read", "--bogus"}, &out); err == nil {
 		t.Fatal("unknown flag accepted")
+	}
+}
+
+// R2-2: a second acl run is refused while another holds the ACL lock.
+func TestACLLockRefusesConcurrentRun(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	lp := filepath.Join(dir, "acl.lock")
+	t.Setenv("BOTVAULT_ACL_LOCK_FILE", lp)
+	m := store.NewMemory()
+	held, err := instance.Acquire(lp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	tp := filepath.Join(dir, "b.token")
+	err = runACLLocked(ctx, m, "root", []string{"grant", "b", "p", "write", "--token-out", tp}, &out)
+	if err == nil || !strings.Contains(err.Error(), "another `botvault acl` run") {
+		t.Fatalf("concurrent run not refused: %v", err)
+	}
+	if _, err := os.Stat(tp); !os.IsNotExist(err) {
+		t.Fatal("refused run minted a token")
+	}
+	if _, err := m.Read(ctx, "_acl.json"); err == nil {
+		t.Fatal("refused run wrote the ACL")
+	}
+	held.Release()
+	if err := runACLLocked(ctx, m, "root", []string{"grant", "b", "p", "write", "--token-out", tp}, &out); err != nil {
+		t.Fatalf("after release: %v", err)
+	}
+}
+
+func TestACLLockPath(t *testing.T) {
+	t.Setenv("BOTVAULT_ACL_LOCK_FILE", "")
+	p := aclLockPath("someroot")
+	if !strings.HasPrefix(p, "/var/tmp/botvault-acl-") || p == aclLockPath("other") || p == lockPath("someroot") {
+		t.Fatalf("bad acl lock path %q", p)
 	}
 }

@@ -37,6 +37,9 @@ var (
 	// been applied and the ACL could not be re-read to tell. The token file
 	// is kept.
 	ErrOutcomeUnknown = errors.New("acladmin: ACL write outcome unknown")
+	// ErrNotVerified: the write was acknowledged but a re-read does not
+	// show the change (e.g. a concurrent writer on another host overwrote it).
+	ErrNotVerified = errors.New("acladmin: change not visible on re-read")
 )
 
 // writeUnknownError wraps a WriteIf failure other than ErrPrecondition: the
@@ -124,8 +127,10 @@ type GrantResult struct {
 //
 // Token file on failure: removed when nothing can have been written
 // (validation, edit refusal, conflicts). If the write itself failed (it may
-// have landed), the ACL is re-read: hash present => success, file kept; hash
-// absent => file removed; re-read fails => file kept, ErrOutcomeUnknown.
+// have landed, or land later), the ACL is re-read: hash present => success;
+// otherwise the file is kept and ErrOutcomeUnknown names it. After an
+// acknowledged write the ACL is re-read and the hash/role must be present
+// (else ErrNotVerified, file kept).
 func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts GrantOpts) (GrantResult, error) {
 	if _, err := acl.ParseRole(role); err != nil {
 		return GrantResult{}, err
@@ -183,6 +188,15 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 		return nil
 	})
 	if err == nil {
+		if verr := a.verify(ctx, func(d *acl.Doc) bool {
+			b, ok := d.Bots[bot]
+			return ok && !b.Revoked && b.Roles[project] == role && (!mint || b.TokenSHA256 == hash)
+		}); verr != nil {
+			if mint {
+				return GrantResult{}, fmt.Errorf("%w; token file kept at %s (harmless if its hash is absent): run `botvault acl list`", verr, opts.TokenOut)
+			}
+			return GrantResult{}, verr
+		}
 		return GrantResult{Minted: mint}, nil
 	}
 	if !mint {
@@ -193,15 +207,35 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 		os.Remove(opts.TokenOut) // nothing was written
 		return GrantResult{}, err
 	}
-	switch landed, rerr := a.hashPresent(ctx, bot, hash); {
-	case rerr != nil:
-		return GrantResult{}, fmt.Errorf("%w: write failed (%v) and re-read failed (%v); token file kept at %s — run `botvault acl list`, and if %s is not granted delete the file", ErrOutcomeUnknown, wu.err, rerr, opts.TokenOut, bot)
-	case landed:
-		return GrantResult{Minted: true}, nil // the write was applied despite the error
-	default:
-		os.Remove(opts.TokenOut)
-		return GrantResult{}, err
+	// The write may have landed, or may still land later (Drive can apply a
+	// request after reporting an error). So the file is only ever kept here:
+	// a token whose hash is not in the ACL cannot authenticate, so keeping it
+	// is harmless, while deleting it could orphan a hash that lands later.
+	landed, rerr := a.hashPresent(ctx, bot, hash)
+	if rerr == nil && landed {
+		return GrantResult{Minted: true}, nil // applied despite the error
 	}
+	why := "the new hash is not (yet) in the ACL"
+	if rerr != nil {
+		why = "re-read failed: " + rerr.Error()
+	}
+	return GrantResult{}, fmt.Errorf("%w: write failed (%v) and %s; token file kept at %s — later run `botvault acl list`: if %s shows the grant the token is live, otherwise delete the file", ErrOutcomeUnknown, wu.err, why, opts.TokenOut, bot)
+}
+
+// verify re-reads the ACL after an acknowledged write and checks ok.
+func (a *Admin) verify(ctx context.Context, ok func(*acl.Doc) bool) error {
+	data, err := a.B.Read(ctx, Path)
+	if err != nil {
+		return fmt.Errorf("%w: re-read failed: %v", ErrNotVerified, err)
+	}
+	var d acl.Doc
+	if err := json.Unmarshal(data, &d); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotVerified, err)
+	}
+	if !ok(&d) {
+		return ErrNotVerified
+	}
+	return nil
 }
 
 // hashPresent re-reads the ACL and reports whether bot now carries hash.
@@ -226,7 +260,7 @@ func (a *Admin) hashPresent(ctx context.Context, bot, hash string) (bool, error)
 // kept for the record. Without force it refuses if bot is the last active
 // owner of any project (which would leave that project unadministrable).
 func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
-	return a.update(ctx, func(d *acl.Doc) error {
+	err := a.update(ctx, func(d *acl.Doc) error {
 		b, ok := d.Bots[bot]
 		if !ok {
 			return fmt.Errorf("%w: %q", ErrNoBot, bot)
@@ -257,6 +291,11 @@ func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
 		d.Bots[bot] = b
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// Report success only once a re-read shows the bot revoked.
+	return a.verify(ctx, func(d *acl.Doc) bool { b, ok := d.Bots[bot]; return ok && b.Revoked })
 }
 
 // Entry is one bot as shown by List. It deliberately has no hash.
