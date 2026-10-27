@@ -134,24 +134,37 @@ consent and code exchange; `serve` doesn't read it.
 The OAuth client id and secret live in the **box's env secrets** (already in the
 environment). They are never in a `.env` file, the repo, or chat.
 
-Restart recipe. The binary isn't on PATH; `scripts/setup_box.sh` builds it at
-`$HOME/.local/bin/botvault` (`/home/box/.local/bin/botvault` on the box; override
-with `BOTVAULT_BIN`). Check it exists **before** stopping the running server:
+Restart: run the script from the repo root. Don't paste the steps into your
+shell.
 
 ```sh
-BIN=${BOTVAULT_BIN:-$HOME/.local/bin/botvault}
-[ -x "$BIN" ] || scripts/setup_box.sh || exit 1        # build first; never stop the server without a binary
-[ -x "$BIN" ] || { echo "no botvault binary at $BIN" >&2; exit 1; }
-export BOTVAULT_OAUTH_REFRESH_TOKEN="$(cat /workspace/loops/RAD-280-oauth/refresh_token)"
-export BOTVAULT_DRIVE_ROOT_ID="$(cat /workspace/loops/RAD-280-oauth/drive_root_id)"
-: "${BOTVAULT_OAUTH_CLIENT_ID:?missing}" "${BOTVAULT_OAUTH_CLIENT_SECRET:?missing}"
-pkill -f 'botvault serve' || true                       # stop only now (the flock is released on exit)
-nohup "$BIN" serve >>/workspace/loops/RAD-280-pilot/serve.log 2>&1 &   # binds 127.0.0.1:8787
-sleep 2
-# health: there is no /health endpoint, so an unauthenticated POST to /mcp
-# should get 401 (server up, auth enforced)
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8787/mcp   # expect 401
+scripts/restart_serve.sh
 ```
+
+It runs these steps in order and stops at the first failure:
+
+1. **Binary.** It uses `$HOME/.local/bin/botvault` (`BOTVAULT_BIN` overrides).
+   If that's missing it runs `scripts/setup_box.sh` to build it, and fails if
+   there is still no binary.
+2. **Env.** It checks that `refresh_token` and `drive_root_id` exist and are
+   non-empty in `/workspace/loops/RAD-280-oauth` (`BOTVAULT_OAUTH_DIR`
+   overrides), then loads them. It requires `BOTVAULT_OAUTH_CLIENT_ID`,
+   `BOTVAULT_OAUTH_CLIENT_SECRET`, `BOTVAULT_OAUTH_REFRESH_TOKEN` and
+   `BOTVAULT_DRIVE_ROOT_ID` to be non-empty. The client id and secret come from
+   the box env secrets.
+3. **Log dir.** `/workspace/loops/RAD-280-pilot` (`BOTVAULT_LOG_DIR`
+   overrides) is created with mode 0700. If it already exists, the script
+   refuses unless the dir is yours and 0700.
+4. **Stop.** It stops only a process whose command line is exactly
+   `"$BIN" serve`, then polls for up to 15s (`STOP_TIMEOUT`). If the old
+   process is still running, it fails **without** starting a new one.
+5. **Start and check.** It starts `"$BIN" serve` on `127.0.0.1:8787`
+   (`BOTVAULT_ADDR`). It then confirms the new process is alive and that an
+   unauthenticated `POST /mcp` returns 401. It polls for up to 10s.
+
+Steps 1 to 3 fail before anything is stopped, so a missing binary, env value
+or log dir never takes down a running server. The script prints names only,
+never values.
 
 The server log (stdout and stderr) is appended to
 `/workspace/loops/RAD-280-pilot/serve.log`. It holds no tokens; check it first if
