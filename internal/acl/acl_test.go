@@ -7,7 +7,7 @@ import (
 
 func doc(t *testing.T, tok string, revoked bool) *ACL {
 	t.Helper()
-	a, err := Parse([]byte(fmt.Sprintf(`{"bots":{"pm":{"token_sha256":%q,"revoked":%v,"roles":{"vc":"owner","*":"read"}}}}`, HashToken(tok), revoked)))
+	a, err := Parse([]byte(fmt.Sprintf(`{"bots":{"pm":{"token_sha256":%q,"revoked":%v,"roles":{"vc":"owner","org":"read"}}}}`, HashToken(tok), revoked)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,14 +31,15 @@ func TestAuthenticate(t *testing.T) {
 
 func TestRoles(t *testing.T) {
 	a := doc(t, "s", false)
-	if a.RoleFor("pm", "vc") != Owner || a.RoleFor("pm", "other") != Read || a.RoleFor("ghost", "vc") != None {
+	if a.RoleFor("pm", "vc") != Owner || a.RoleFor("pm", "org") != Read || a.RoleFor("pm", "other") != None || a.RoleFor("ghost", "vc") != None {
 		t.Fatal("role resolution wrong")
 	}
 }
 
 func TestParseRejects(t *testing.T) {
 	for _, in := range []string{`{`, `{"bots":{"x":{"token_sha256":"short","roles":{}}}}`,
-		fmt.Sprintf(`{"bots":{"x":{"token_sha256":%q,"roles":{"p":"admin"}}}}`, HashToken("t"))} {
+		fmt.Sprintf(`{"bots":{"x":{"token_sha256":%q,"roles":{"p":"admin"}}}}`, HashToken("t")),
+		fmt.Sprintf(`{"bots":{"x":{"token_sha256":%q,"roles":{"*":"read"}}}}`, HashToken("t"))} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("accepted %s", in)
 		}

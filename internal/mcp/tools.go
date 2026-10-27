@@ -42,14 +42,14 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 	case "list":
 		return s.V.List(ctx, bot, a.Project, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status})
 	case "get":
-		return s.V.Get(ctx, bot, a.Project, a.Kind, a.Key, a.Version)
+		return s.V.Get(ctx, bot, a.Project, a.Key, a.Version)
 	case "put":
 		return s.V.Put(ctx, bot, vault.PutInput{Project: a.Project, Kind: a.Kind, Key: a.Key,
 			Title: a.Title, Body: a.Body, Status: a.Status, Tags: a.Tags, Links: a.Links, IfVersion: a.IfVersion})
 	case "append":
-		return s.V.Append(ctx, bot, a.Project, a.Kind, a.Key, a.Text)
+		return s.V.Append(ctx, bot, a.Project, a.Key, a.Text)
 	case "delete":
-		return s.V.Delete(ctx, bot, a.Project, a.Kind, a.Key, a.IfVersion)
+		return s.V.Delete(ctx, bot, a.Project, a.Key, a.IfVersion)
 	}
 	return nil, fmt.Errorf("%w: %s", errUnknownTool, name)
 }
@@ -63,7 +63,7 @@ var (
 	strs     = map[string]any{"type": "array", "items": str}
 	integer  = map[string]any{"type": "integer", "minimum": 0}
 	kindProp = map[string]any{"type": "string", "enum": vault.Kinds}
-	addr     = map[string]any{"project": str, "kind": kindProp, "key": str}
+	addr     = map[string]any{"project": str, "key": str}
 )
 
 func with(base map[string]any, extra map[string]any) map[string]any {
@@ -78,15 +78,15 @@ func with(base map[string]any, extra map[string]any) map[string]any {
 }
 
 var toolDefs = []map[string]any{
-	{"name": "list_projects", "description": "List projects you can read.", "inputSchema": obj(map[string]any{})},
+	{"name": "list_projects", "description": "List projects your token is explicitly granted (deny by default).", "inputSchema": obj(map[string]any{})},
 	{"name": "list", "description": "List record summaries (no body) in a project, newest first. Archived records are hidden unless status=archived.",
 		"inputSchema": obj(map[string]any{"project": str, "kind": kindProp, "tag": str, "status": str}, "project")},
 	{"name": "get", "description": "Get a record; version>0 fetches a prior version from history.",
-		"inputSchema": obj(with(addr, map[string]any{"version": integer}), "project", "kind", "key")},
-	{"name": "put", "description": "Create or replace a record. Pass if_version (0 = must not exist, N = must currently be N) to fail with CONFLICT on a stale write. Author is taken from your token.",
-		"inputSchema": obj(with(addr, map[string]any{"title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "project", "kind", "key", "title")},
+		"inputSchema": obj(with(addr, map[string]any{"version": integer}), "project", "key")},
+	{"name": "put", "description": "Create or update a record (keys are unique per project; kind is optional metadata). Without if_version (or 0) it only creates; updating requires if_version = current version, else CONFLICT. Author is taken from your token.",
+		"inputSchema": obj(with(addr, map[string]any{"kind": kindProp, "title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "project", "key", "title")},
 	{"name": "append", "description": "Append text to a record's body without a version check; stamped with your bot id and time.",
-		"inputSchema": obj(with(addr, map[string]any{"text": str}), "project", "kind", "key", "text")},
+		"inputSchema": obj(with(addr, map[string]any{"text": str}), "project", "key", "text")},
 	{"name": "delete", "description": "Soft delete: marks the record archived (new version, history kept). Project owners only.",
-		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "project", "kind", "key")},
+		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "project", "key")},
 }

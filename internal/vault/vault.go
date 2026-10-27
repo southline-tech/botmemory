@@ -51,9 +51,9 @@ type Record struct {
 
 // PutInput is the caller-controlled part of a record.
 type PutInput struct {
-	Project, Kind, Key, Title, Body, Status string
+	Project, Kind, Key, Title, Body, Status string // Kind optional
 	Tags, Links                             []string
-	// IfVersion: nil = unconditional; 0 = must not exist; N = must be at N.
+	// IfVersion: nil or 0 = create only (CONFLICT if key exists); N = must be at N.
 	IfVersion *int
 }
 
@@ -97,11 +97,12 @@ func validKind(k string) error {
 	return fmt.Errorf("%w: kind %q not in %v", ErrInvalid, k, Kinds)
 }
 
-func recPath(project, kind, key string) string {
-	return path.Join("projects", project, "records", kind, key+".json")
+// Keys are unique per project; kind is metadata stored inside the record.
+func recPath(project, key string) string {
+	return path.Join("projects", project, "records", key+".json")
 }
-func histPath(project, kind, key string, ver int) string {
-	return path.Join("projects", project, "history", kind, key, fmt.Sprintf("v%d.json", ver))
+func histPath(project, key string, ver int) string {
+	return path.Join("projects", project, "history", key, fmt.Sprintf("v%d.json", ver))
 }
 
 func (v *Vault) lock(p string) func() {
@@ -130,13 +131,13 @@ func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
 func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) error {
 	if prev != nil {
 		b, _ := json.MarshalIndent(prev, "", "  ")
-		if err := v.b.Write(ctx, histPath(project, prev.Kind, prev.Key, prev.Version), b); err != nil {
+		if err := v.b.Write(ctx, histPath(project, prev.Key, prev.Version), b); err != nil {
 			return err
 		}
 	}
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
-	return v.b.Write(ctx, recPath(project, next.Kind, next.Key), b)
+	return v.b.Write(ctx, recPath(project, next.Key), b)
 }
 
 func (v *Vault) ListProjects(ctx context.Context, bot string) ([]string, error) {
@@ -156,21 +157,21 @@ func (v *Vault) ListProjects(ctx context.Context, bot string) ([]string, error) 
 	return out, nil
 }
 
-func (v *Vault) Get(ctx context.Context, bot, project, kind, key string, version int) (*Record, error) {
-	if err := v.checkAddr(project, kind, key); err != nil {
+func (v *Vault) Get(ctx context.Context, bot, project, key string, version int) (*Record, error) {
+	if err := v.checkAddr(project, key); err != nil {
 		return nil, err
 	}
 	if err := v.need(bot, project, acl.Read); err != nil {
 		return nil, err
 	}
-	cur, err := v.load(ctx, recPath(project, kind, key))
+	cur, err := v.load(ctx, recPath(project, key))
 	if err != nil || version == 0 || version == cur.Version {
 		return cur, err
 	}
 	if version < 0 || version > cur.Version {
 		return nil, fmt.Errorf("%w: version %d (current %d)", ErrNotFound, version, cur.Version)
 	}
-	return v.load(ctx, histPath(project, kind, key, version))
+	return v.load(ctx, histPath(project, key, version))
 }
 
 func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]Record, error) {
@@ -180,20 +181,18 @@ func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]
 	if err := v.need(bot, project, acl.Read); err != nil {
 		return nil, err
 	}
-	kinds := Kinds
 	if f.Kind != "" {
 		if err := validKind(f.Kind); err != nil {
 			return nil, err
 		}
-		kinds = []string{f.Kind}
 	}
 	out := []Record{}
-	for _, k := range kinds {
-		dir := path.Join("projects", project, "records", k)
-		names, err := v.b.List(ctx, dir)
-		if err != nil {
-			return nil, err
-		}
+	dir := path.Join("projects", project, "records")
+	names, err := v.b.List(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	{
 		for _, n := range names {
 			if !strings.HasSuffix(n, ".json") {
 				continue
@@ -208,6 +207,9 @@ func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]
 			if f.Status != "" && r.Status != f.Status {
 				continue
 			}
+			if f.Kind != "" && r.Kind != f.Kind {
+				continue
+			}
 			if f.Tag != "" && !contains(r.Tags, f.Tag) {
 				continue
 			}
@@ -220,8 +222,13 @@ func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]
 }
 
 func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, error) {
-	if err := v.checkAddr(in.Project, in.Kind, in.Key); err != nil {
+	if err := v.checkAddr(in.Project, in.Key); err != nil {
 		return nil, err
+	}
+	if in.Kind != "" {
+		if err := validKind(in.Kind); err != nil {
+			return nil, err
+		}
 	}
 	if in.Status == StatusArchived {
 		return nil, fmt.Errorf("%w: use delete to archive", ErrInvalid)
@@ -229,7 +236,7 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 	if err := v.need(bot, in.Project, acl.Write); err != nil {
 		return nil, err
 	}
-	p := recPath(in.Project, in.Kind, in.Key)
+	p := recPath(in.Project, in.Key)
 	defer v.lock(p)()
 	prev, err := v.load(ctx, p)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -239,11 +246,11 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 	if prev != nil {
 		curVer = prev.Version
 	}
+	if in.IfVersion == nil && prev != nil {
+		return nil, fmt.Errorf("%w: key exists at version %d; pass if_version to update", ErrConflict, curVer)
+	}
 	if in.IfVersion != nil && *in.IfVersion != curVer {
 		return nil, fmt.Errorf("%w: if_version=%d but current is %d", ErrConflict, *in.IfVersion, curVer)
-	}
-	if prev != nil && prev.Status == StatusArchived && in.IfVersion == nil {
-		return nil, fmt.Errorf("%w: record is archived; pass if_version to restore", ErrConflict)
 	}
 	now := v.now()
 	next := &Record{
@@ -265,8 +272,8 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 
 // Append adds text to an existing record's body without a version check
 // (spec: lock-free for callers; serialized server-side by the per-key lock).
-func (v *Vault) Append(ctx context.Context, bot, project, kind, key, text string) (*Record, error) {
-	if err := v.checkAddr(project, kind, key); err != nil {
+func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Record, error) {
+	if err := v.checkAddr(project, key); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(text) == "" {
@@ -275,7 +282,7 @@ func (v *Vault) Append(ctx context.Context, bot, project, kind, key, text string
 	if err := v.need(bot, project, acl.Write); err != nil {
 		return nil, err
 	}
-	p := recPath(project, kind, key)
+	p := recPath(project, key)
 	defer v.lock(p)()
 	prev, err := v.load(ctx, p)
 	if err != nil {
@@ -301,14 +308,14 @@ func (v *Vault) Append(ctx context.Context, bot, project, kind, key, text string
 
 // Delete soft-deletes (status=archived, new version). Owners only. Nothing is
 // ever removed from storage.
-func (v *Vault) Delete(ctx context.Context, bot, project, kind, key string, ifVersion *int) (*Record, error) {
-	if err := v.checkAddr(project, kind, key); err != nil {
+func (v *Vault) Delete(ctx context.Context, bot, project, key string, ifVersion *int) (*Record, error) {
+	if err := v.checkAddr(project, key); err != nil {
 		return nil, err
 	}
 	if err := v.need(bot, project, acl.Owner); err != nil {
 		return nil, err
 	}
-	p := recPath(project, kind, key)
+	p := recPath(project, key)
 	defer v.lock(p)()
 	prev, err := v.load(ctx, p)
 	if err != nil {
@@ -330,11 +337,8 @@ func (v *Vault) Delete(ctx context.Context, bot, project, kind, key string, ifVe
 	return &next, nil
 }
 
-func (v *Vault) checkAddr(project, kind, key string) error {
+func (v *Vault) checkAddr(project, key string) error {
 	if err := validName("project", project); err != nil {
-		return err
-	}
-	if err := validKind(kind); err != nil {
 		return err
 	}
 	return validName("key", key)

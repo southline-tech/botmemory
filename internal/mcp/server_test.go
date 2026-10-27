@@ -86,7 +86,7 @@ func TestInitializeAndList(t *testing.T) {
 
 func TestToolFlowStampsAuthorFromToken(t *testing.T) {
 	s := newSrv(t)
-	k := map[string]any{"project": "vc", "kind": "handoff", "key": "rad-280"}
+	k := map[string]any{"project": "vc", "key": "rad-280"}
 	with := func(extra map[string]any) map[string]any {
 		m := map[string]any{}
 		for a, b := range k {
@@ -97,14 +97,14 @@ func TestToolFlowStampsAuthorFromToken(t *testing.T) {
 		}
 		return m
 	}
-	if e, txt := call(t, s, "impl-tok", "put", with(map[string]any{"title": "H", "body": "b", "if_version": 0})); e || !strings.Contains(txt, `"updated_by": "impl"`) {
+	if e, txt := call(t, s, "impl-tok", "put", with(map[string]any{"kind": "handoff", "title": "H", "body": "b"})); e || !strings.Contains(txt, `"updated_by": "impl"`) {
 		t.Fatal(txt)
 	}
 	// clients cannot spoof the author: unknown fields are rejected
 	if e, txt := call(t, s, "impl-tok", "put", with(map[string]any{"title": "H", "updated_by": "pm"})); !e || !strings.HasPrefix(txt, "INVALID") {
 		t.Fatal(txt)
 	}
-	if e, txt := call(t, s, "pm-tok", "put", with(map[string]any{"title": "H2", "if_version": 0})); !e || !strings.HasPrefix(txt, "CONFLICT") {
+	if e, txt := call(t, s, "pm-tok", "put", with(map[string]any{"title": "H2"})); !e || !strings.HasPrefix(txt, "CONFLICT") {
 		t.Fatal(txt)
 	}
 	if e, txt := call(t, s, "pm-tok", "append", with(map[string]any{"text": "note"})); e || !strings.Contains(txt, `"version": 2`) {
@@ -123,6 +123,9 @@ func TestToolFlowStampsAuthorFromToken(t *testing.T) {
 		t.Fatal(txt)
 	}
 	if e, txt := call(t, s, "pm-tok", "list", map[string]any{"project": "vc", "status": "archived"}); e || !strings.Contains(txt, "rad-280") {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "impl-tok", "list", map[string]any{"project": "elsewhere"}); !e || !strings.HasPrefix(txt, "FORBIDDEN") {
 		t.Fatal(txt)
 	}
 	_, out := rpc(t, s, "pm-tok", "tools/call", map[string]any{"name": "bogus"})

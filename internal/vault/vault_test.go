@@ -20,7 +20,7 @@ func newVault(t *testing.T) (*Vault, *store.Memory) {
 	 "pm":{"token_sha256":%q,"roles":{"vc":"owner"}},
 	 "impl":{"token_sha256":%q,"roles":{"vc":"write"}},
 	 "ro":{"token_sha256":%q,"roles":{"vc":"read"}},
-	 "grok":{"token_sha256":%q,"roles":{"*":"write"}}}}`, h, h, h, h)))
+	 "grok":{"token_sha256":%q,"roles":{"vc":"write","other":"write","secret":"write"}}}}`, h, h, h, h)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,18 +49,18 @@ func TestPutGetAttributionAndHistory(t *testing.T) {
 	if err != nil || r2.Version != 2 || r2.CreatedBy != "pm" || r2.UpdatedBy != "impl" || !r2.CreatedAt.Equal(r1.CreatedAt) {
 		t.Fatalf("%+v %v", r2, err)
 	}
-	if _, err := m.Read(ctx, "projects/vc/history/decision/k1/v1.json"); err != nil {
+	if _, err := m.Read(ctx, "projects/vc/history/k1/v1.json"); err != nil {
 		t.Fatal("history copy missing:", err)
 	}
-	old, err := v.Get(ctx, "ro", "vc", "decision", "k1", 1)
+	old, err := v.Get(ctx, "ro", "vc", "k1", 1)
 	if err != nil || old.Body != "one" {
 		t.Fatalf("%+v %v", old, err)
 	}
-	cur, _ := v.Get(ctx, "ro", "vc", "decision", "k1", 0)
+	cur, _ := v.Get(ctx, "ro", "vc", "k1", 0)
 	if cur.Body != "two" || cur.ETag != "k1:2" {
 		t.Fatalf("%+v", cur)
 	}
-	if _, err := v.Get(ctx, "ro", "vc", "decision", "k1", 9); !errors.Is(err, ErrNotFound) {
+	if _, err := v.Get(ctx, "ro", "vc", "k1", 9); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 }
@@ -68,14 +68,17 @@ func TestPutGetAttributionAndHistory(t *testing.T) {
 func TestStaleWriteFails(t *testing.T) {
 	v, _ := newVault(t)
 	put(v, "pm", nil, "a")
-	put(v, "pm", nil, "b") // now v2
+	if _, err := put(v, "pm", nil, "blind"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("update without if_version: %v", err)
+	}
+	put(v, "pm", iv(1), "b") // now v2
 	if _, err := put(v, "impl", iv(1), "stale"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("want conflict, got %v", err)
 	}
 	if _, err := put(v, "impl", iv(0), "create-only"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("create-only on existing: %v", err)
 	}
-	if r, _ := v.Get(ctx, "pm", "vc", "decision", "k1", 0); r.Body != "b" || r.Version != 2 {
+	if r, _ := v.Get(ctx, "pm", "vc", "k1", 0); r.Body != "b" || r.Version != 2 {
 		t.Fatalf("stale write mutated record: %+v", r)
 	}
 }
@@ -111,32 +114,38 @@ func TestRoles(t *testing.T) {
 	if _, err := put(v, "stranger", nil, "x"); !errors.Is(err, ErrForbidden) {
 		t.Fatal("stranger wrote")
 	}
-	if _, err := v.Get(ctx, "stranger", "vc", "decision", "k1", 0); !errors.Is(err, ErrForbidden) {
+	if _, err := v.Get(ctx, "stranger", "vc", "k1", 0); !errors.Is(err, ErrForbidden) {
 		t.Fatal("stranger read")
 	}
 	put(v, "impl", nil, "x")
-	if _, err := v.Delete(ctx, "impl", "vc", "decision", "k1", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := v.Delete(ctx, "impl", "vc", "k1", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatal("writer deleted")
 	}
-	if _, err := v.Delete(ctx, "grok", "vc", "decision", "k1", nil); !errors.Is(err, ErrForbidden) {
-		t.Fatal("wildcard writer deleted")
+	if _, err := v.Delete(ctx, "grok", "vc", "k1", nil); !errors.Is(err, ErrForbidden) {
+		t.Fatal("writer deleted")
 	}
-	if _, err := v.Put(ctx, "grok", PutInput{Project: "other", Kind: "note", Key: "n", Title: "t"}); err != nil {
-		t.Fatal("wildcard write:", err)
+	if _, err := v.Put(ctx, "grok", PutInput{Project: "other", Key: "n", Title: "t"}); err != nil {
+		t.Fatal("explicit grant, no kind:", err)
+	}
+	if _, err := v.Put(ctx, "grok", PutInput{Project: "ungranted", Key: "n", Title: "t"}); !errors.Is(err, ErrForbidden) {
+		t.Fatal("deny by default violated")
+	}
+	if _, err := v.List(ctx, "impl", "other", ListFilter{}); !errors.Is(err, ErrForbidden) {
+		t.Fatal("impl listed ungranted project")
 	}
 }
 
 func TestDeleteArchivesOnly(t *testing.T) {
 	v, m := newVault(t)
 	put(v, "pm", nil, "keep me")
-	if _, err := v.Delete(ctx, "pm", "vc", "decision", "k1", iv(5)); !errors.Is(err, ErrConflict) {
+	if _, err := v.Delete(ctx, "pm", "vc", "k1", iv(5)); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	r, err := v.Delete(ctx, "pm", "vc", "decision", "k1", iv(1))
+	r, err := v.Delete(ctx, "pm", "vc", "k1", iv(1))
 	if err != nil || r.Status != StatusArchived || r.Version != 2 || r.UpdatedBy != "pm" || r.Body != "keep me" {
 		t.Fatalf("%+v %v", r, err)
 	}
-	if _, err := m.Read(ctx, "projects/vc/records/decision/k1.json"); err != nil {
+	if _, err := m.Read(ctx, "projects/vc/records/k1.json"); err != nil {
 		t.Fatal("record removed from storage")
 	}
 	if l, _ := v.List(ctx, "pm", "vc", ListFilter{}); len(l) != 0 {
@@ -148,7 +157,7 @@ func TestDeleteArchivesOnly(t *testing.T) {
 	if _, err := put(v, "impl", nil, "x"); !errors.Is(err, ErrConflict) {
 		t.Fatal("blind put revived archived record")
 	}
-	if _, err := v.Append(ctx, "impl", "vc", "decision", "k1", "x"); !errors.Is(err, ErrConflict) {
+	if _, err := v.Append(ctx, "impl", "vc", "k1", "x"); !errors.Is(err, ErrConflict) {
 		t.Fatal("append to archived")
 	}
 	if r, err := put(v, "pm", iv(2), "restored"); err != nil || r.Status != "active" {
@@ -161,15 +170,15 @@ func TestDeleteArchivesOnly(t *testing.T) {
 
 func TestAppend(t *testing.T) {
 	v, _ := newVault(t)
-	if _, err := v.Append(ctx, "impl", "vc", "decision", "k1", "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := v.Append(ctx, "impl", "vc", "k1", "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	put(v, "pm", nil, "start")
-	r, err := v.Append(ctx, "impl", "vc", "decision", "k1", "more")
+	r, err := v.Append(ctx, "impl", "vc", "k1", "more")
 	if err != nil || r.Version != 2 || r.UpdatedBy != "impl" || !strings.Contains(r.Body, "— impl, ") || !strings.HasSuffix(r.Body, "more\n") || !strings.HasPrefix(r.Body, "start") {
 		t.Fatalf("%+v %v", r, err)
 	}
-	if _, err := v.Append(ctx, "ro", "vc", "decision", "k1", "x"); !errors.Is(err, ErrForbidden) {
+	if _, err := v.Append(ctx, "ro", "vc", "k1", "x"); !errors.Is(err, ErrForbidden) {
 		t.Fatal("reader appended")
 	}
 }
@@ -179,6 +188,9 @@ func TestListAndProjects(t *testing.T) {
 	v.Put(ctx, "pm", PutInput{Project: "vc", Kind: "spec", Key: "a", Title: "A", Body: "bodyA", Tags: []string{"m1"}})
 	v.Put(ctx, "pm", PutInput{Project: "vc", Kind: "note", Key: "b", Title: "B", Status: "draft"})
 	v.Put(ctx, "grok", PutInput{Project: "secret", Kind: "note", Key: "c", Title: "C"})
+	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Kind: "decision", Key: "a", Title: "dup"}); !errors.Is(err, ErrConflict) {
+		t.Fatal("key must be unique per project across kinds", err)
+	}
 	l, err := v.List(ctx, "ro", "vc", ListFilter{})
 	if err != nil || len(l) != 2 || l[0].Key != "b" || l[1].Body != "" {
 		t.Fatalf("%+v %v", l, err)
@@ -204,7 +216,7 @@ func TestValidation(t *testing.T) {
 	v, _ := newVault(t)
 	for _, in := range []PutInput{
 		{Project: "../x", Kind: "note", Key: "k"},
-		{Project: "vc", Kind: "secret", Key: "k"},
+		{Project: "vc", Kind: "secret", Key: "k"}, // kind optional but validated
 		{Project: "vc", Kind: "note", Key: "a/b"},
 		{Project: "vc", Kind: "note", Key: "UPPER"},
 	} {

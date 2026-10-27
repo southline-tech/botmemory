@@ -38,8 +38,8 @@ func (r Role) String() string {
 	return [...]string{"none", "read", "write", "owner"}[r]
 }
 
-// Bot is one ACL entry. Roles maps project -> role; key "*" applies to all
-// projects not listed explicitly.
+// Bot is one ACL entry. Roles maps project -> role. Deny by default: a bot
+// has no access to any project not listed explicitly (no wildcard).
 type Bot struct {
 	TokenSHA256 string            `json:"token_sha256"`
 	Revoked     bool              `json:"revoked,omitempty"`
@@ -71,6 +71,9 @@ func Parse(data []byte) (*ACL, error) {
 		}
 		m := map[string]Role{}
 		for p, s := range b.Roles {
+			if p == "*" || p == "" {
+				return nil, fmt.Errorf("acl: bot %q: wildcard/empty project not allowed (deny by default; grant projects explicitly)", id)
+			}
 			r, err := ParseRole(s)
 			if err != nil {
 				return nil, fmt.Errorf("acl: bot %q: %w", id, err)
@@ -100,13 +103,9 @@ func (a *ACL) Authenticate(token string) (string, error) {
 	return found, nil
 }
 
-// RoleFor returns the bot's role on project (explicit entry beats "*").
+// RoleFor returns the bot's explicit role on project, or None.
 func (a *ACL) RoleFor(bot, project string) Role {
-	m := a.roles[bot]
-	if r, ok := m[project]; ok {
-		return r
-	}
-	return m["*"]
+	return a.roles[bot][project]
 }
 
 func HashToken(t string) string {
