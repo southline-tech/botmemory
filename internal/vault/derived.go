@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 const summaryLen = 500

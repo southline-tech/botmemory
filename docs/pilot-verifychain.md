@@ -81,6 +81,7 @@ git.) Every call names `project: "verifychain"`, and other projects are denied.
 ```sh
 botvault acl list                                    # bots, roles, active/REVOKED; no hashes
 botvault acl revoke reviewer-verifychain             # stops working within 60s
+botvault acl remove reviewer-verifychain             # delete the entry entirely
 botvault acl grant reviewer-verifychain verifychain write --rotate \
   --token-out ~/.config/botvault/pilot/reviewer-verifychain/botvault.token.new
 ```

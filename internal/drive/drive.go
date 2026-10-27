@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 const folderMime = "application/vnd.google-apps.folder"

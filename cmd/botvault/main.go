@@ -22,12 +22,12 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/drive"
-	"github.com/radiancelux/botvault/internal/instance"
-	"github.com/radiancelux/botvault/internal/mcp"
-	"github.com/radiancelux/botvault/internal/store"
-	"github.com/radiancelux/botvault/internal/vault"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/drive"
+	"github.com/southline-tech/botvault/internal/instance"
+	"github.com/southline-tech/botvault/internal/mcp"
+	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/vault"
 )
 
 const driveScope = "https://www.googleapis.com/auth/drive.file"

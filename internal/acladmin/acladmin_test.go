@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 var ctx = context.Background()
@@ -418,5 +418,46 @@ func TestChangesVerifiedBeforeSuccess(t *testing.T) {
 	}
 	if _, err := New(dropWrite{m}).Grant(ctx, "b", "q", "read", GrantOpts{Rotate: false}); err == nil {
 		t.Fatal("grant to revoked bot accepted")
+	}
+}
+
+// M3 follow-up: Remove deletes the entry, honours last-owner protection,
+// and reports ErrNotVerified / ErrOutcomeUnknown like the other edits.
+func TestRemove(t *testing.T) {
+	m := store.NewMemory()
+	a := New(m)
+	dir := t.TempDir()
+	for _, g := range [][3]string{{"pm", "p", "owner"}, {"dev", "p", "write"}, {"x", "p", "read"}} {
+		if _, err := a.Grant(ctx, g[0], g[1], g[2], GrantOpts{TokenOut: filepath.Join(dir, g[0])}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Remove(ctx, "pm", false); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("last owner removed without force: %v", err)
+	}
+	if err := a.Remove(ctx, "nobody", false); !errors.Is(err, ErrNoBot) {
+		t.Fatalf("missing bot: %v", err)
+	}
+	if err := New(dropWrite{m}).Remove(ctx, "dev", false); !errors.Is(err, ErrNotVerified) {
+		t.Fatalf("unverified remove reported: %v", err)
+	}
+	if err := New(failNoSave{m}).Remove(ctx, "dev", false); !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("failed write: %v", err)
+	}
+	if err := New(&saveThenFail{Backend: m, failWrites: true}).Remove(ctx, "dev", false); err != nil {
+		t.Fatalf("landed write with lost response: %v", err)
+	}
+	if err := a.Remove(ctx, "x", false); err != nil {
+		t.Fatal(err)
+	}
+	es, _ := a.List(ctx)
+	if len(es) != 1 || es[0].Bot != "pm" {
+		t.Fatalf("after remove: %+v", es)
+	}
+	if err := a.Remove(ctx, "pm", true); err != nil {
+		t.Fatal(err)
+	}
+	if es, _ := a.List(ctx); len(es) != 0 {
+		t.Fatalf("not empty: %+v", es)
 	}
 }

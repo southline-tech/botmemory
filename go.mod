@@ -1,4 +1,4 @@
-module github.com/radiancelux/botvault
+module github.com/southline-tech/botvault
 
 go 1.27.3
 

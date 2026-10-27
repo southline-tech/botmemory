@@ -60,12 +60,13 @@ Edits `_acl.json` in the configured backend (same env as `serve`). Every edit is
 ```sh
 botvault acl grant <bot> <project> <role> --token-out FILE [--rotate]   # role: read|write|owner
 botvault acl revoke <bot> [--force]                                    # whole bot, every project
+botvault acl remove <bot> [--force]                                    # delete the entry entirely (same last-owner rule)
 botvault acl list                                                       # bots, roles, active/REVOKED; never hashes
 ```
 - A new bot (or `--rotate`) gets a fresh token. Only its SHA-256 goes into `_acl.json`, and the raw token is written only to `FILE`, which is created with mode 0600 and must not already exist (symlinks are refused). The CLI never prints the token. If the ACL write fails, `FILE` is removed.
 - If the ACL write itself fails (Drive may have saved it, or may apply it later), grant re-reads the ACL. If the new hash is there, the grant succeeded. Otherwise the token file is **kept** and grant reports the outcome as unknown, giving the file path. A token whose hash isn't in the ACL can't authenticate, so keeping it is harmless: check `botvault acl list` later and delete the file if the bot isn't granted. Errors where nothing can have been written (validation, refusals, persistent conflicts) remove the file.
 - After a write is acknowledged, grant and revoke re-read `_acl.json` and report success only if the change is visible (the hash and role are present, or the bot shows revoked). Otherwise they fail with "change not visible on re-read".
-- `botvault acl` runs hold an exclusive lock, `/var/tmp/botvault-acl-<sha256(root id)[:12]>.lock` (opened with O_NOFOLLOW; override with `BOTVAULT_ACL_LOCK_FILE`). A second concurrent run is refused, not queued. The lock covers **one host only**: edits from other hosts rely on the Drive version check and the re-read verification. The server only ever reads `_acl.json`, so it doesn't take this lock.
+- `botvault acl` runs hold an exclusive lock, `<dir>/acl-<sha256(root id)[:12]>.lock` where `<dir>` is `$XDG_RUNTIME_DIR/botvault`, else `os.UserCacheDir()/botvault` (e.g. `~/.cache/botvault`); the dir is created 0700 and refused unless it is a real directory owned by you with no group/other bits. Override with `BOTVAULT_ACL_LOCK_FILE`; the lock is opened with O_NOFOLLOW and without O_TRUNC, and an existing non-empty file that isn't a botvault lock (a PID line) is refused, never emptied. A second concurrent run is refused, not queued. The lock covers **one host only**: edits from other hosts rely on the Drive version check and the re-read verification. The server only ever reads `_acl.json`, so it doesn't take this lock.
 - Token files are fsynced. A failed write or close removes the partial file. `O_NOFOLLOW` covers only the last path component, so keep token files in a directory you own.
 - The mint decision is re-checked inside the conditional edit: a bot created concurrently without `--rotate` fails the grant.
 - Granting to an existing bot adds or changes the role and keeps its token. A revoked bot can only be re-enabled with `--rotate`.
@@ -77,7 +78,7 @@ botvault acl list                                                       # bots, 
 `scripts/setup_box.sh [--test]` installs the Go version from `go.mod` if missing (sha256 checked against go.dev), builds `~/.local/bin/botvault`, and optionally runs every package's tests one at a time. It loads `.env` only if it is a regular file owned by you with mode 600 or 400 and reports the required env vars **by name only** (set/MISSING). It also checks the Drive root id against `~/.config/botvault/drive_root_id`, writing that file from `BOTVAULT_DRIVE_ROOT_ID` if missing and refusing if they differ. The script contains no secrets: restore `.env` and the OAuth refresh token yourself.
 
 ### Hardening
-- The lock file is opened with `O_NOFOLLOW`, so a symlink planted at the (world-writable `/var/tmp`) lock path is refused.
+- The lock file is opened with `O_NOFOLLOW`, so a symlink planted at the lock path is refused, and an existing non-lock file is refused rather than truncated. The ACL lock lives in a per-user 0700 dir; the server instance lock still defaults to `/var/tmp` (protected by O_NOFOLLOW and the non-lock check).
 - CI: `persist-credentials: false` on checkout, and a 15-minute job timeout.
 
 ### verifychain-ai pilot

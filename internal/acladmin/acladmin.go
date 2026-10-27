@@ -17,8 +17,8 @@ import (
 	"sort"
 	"syscall"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 // Path is the ACL document's path relative to the vault root.
@@ -265,27 +265,8 @@ func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
 		if !ok {
 			return fmt.Errorf("%w: %q", ErrNoBot, bot)
 		}
-		if !force && !b.Revoked {
-			var orphaned []string
-			for p, r := range b.Roles {
-				if r != "owner" {
-					continue
-				}
-				other := false
-				for id, ob := range d.Bots {
-					if id != bot && !ob.Revoked && ob.Roles[p] == "owner" {
-						other = true
-						break
-					}
-				}
-				if !other {
-					orphaned = append(orphaned, p)
-				}
-			}
-			if len(orphaned) > 0 {
-				sort.Strings(orphaned)
-				return fmt.Errorf("%w of %v (%q); grant another owner first or use --force", ErrLastOwner, orphaned, bot)
-			}
+		if err := lastOwnerCheck(d, bot, force); err != nil {
+			return err
 		}
 		b.Revoked = true
 		d.Bots[bot] = b
@@ -296,6 +277,65 @@ func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
 	}
 	// Report success only once a re-read shows the bot revoked.
 	return a.verify(ctx, func(d *acl.Doc) bool { b, ok := d.Bots[bot]; return ok && b.Revoked })
+}
+
+// Remove deletes bot's entry from the ACL entirely (token hash and roles).
+// Same last-owner rule as Revoke. A failed write returns ErrOutcomeUnknown
+// unless a re-read settles it; success is reported only once a re-read
+// shows the entry gone (else ErrNotVerified).
+func (a *Admin) Remove(ctx context.Context, bot string, force bool) error {
+	err := a.update(ctx, func(d *acl.Doc) error {
+		if _, ok := d.Bots[bot]; !ok {
+			return fmt.Errorf("%w: %q", ErrNoBot, bot)
+		}
+		if err := lastOwnerCheck(d, bot, force); err != nil {
+			return err
+		}
+		delete(d.Bots, bot)
+		return nil
+	})
+	gone := func(d *acl.Doc) bool { _, ok := d.Bots[bot]; return !ok }
+	var wu *writeUnknownError
+	if errors.As(err, &wu) {
+		if a.verify(ctx, gone) == nil {
+			return nil
+		}
+		return fmt.Errorf("%w: write failed (%v); run `botvault acl list` later to see whether %s is still present", ErrOutcomeUnknown, wu.err, bot)
+	}
+	if err != nil {
+		return err
+	}
+	return a.verify(ctx, gone)
+}
+
+// lastOwnerCheck refuses (unless force) when bot is active and the only
+// active owner of some project.
+func lastOwnerCheck(d *acl.Doc, bot string, force bool) error {
+	b := d.Bots[bot]
+	if force || b.Revoked {
+		return nil
+	}
+	var orphaned []string
+	for p, r := range b.Roles {
+		if r != "owner" {
+			continue
+		}
+		other := false
+		for id, ob := range d.Bots {
+			if id != bot && !ob.Revoked && ob.Roles[p] == "owner" {
+				other = true
+				break
+			}
+		}
+		if !other {
+			orphaned = append(orphaned, p)
+		}
+	}
+	if len(orphaned) > 0 {
+		sort.Strings(orphaned)
+		return fmt.Errorf("%w of %v (%q); grant another owner first or use --force", ErrLastOwner, orphaned, bot)
+	}
+	return nil
 }
 
 // Entry is one bot as shown by List. It deliberately has no hash.
