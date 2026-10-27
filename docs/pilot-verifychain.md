@@ -28,7 +28,7 @@ Each grant mints a fresh token and writes **only its SHA-256 hash** into
 edit). It writes the raw token to `/workspace/loops/RAD-280-pilot/<bot>/botvault.token`
 with mode 0600. That file must not already exist, and a symlink there is refused. `O_NOFOLLOW`
 only checks the final path component, so the script creates each per-bot
-directory with mode 0700 under `/workspace/loops/RAD-280-pilot/` (override with `PILOT_TOKEN_DIR`). If the ACL write fails
+directory with mode 0700 under `/workspace/loops/RAD-280-pilot/` (override with `PILOT_TOKEN_DIR`). If that dir or a per-bot dir already exists, the script **refuses** (exit 3, never chmods) unless it is a real directory owned by you with mode 0700. If the ACL write fails
 after the token file was written, the CLI re-reads the ACL. If the new hash is
 there, the grant succeeded. Otherwise the file is **kept** (Drive may still
 apply the write late) and the CLI reports the outcome as unknown, giving the
@@ -120,7 +120,6 @@ No real pilot tokens have been granted.
 | `BOTVAULT_LOCK_FILE` | serve | optional instance-lock override |
 | `BOTVAULT_ACL_FILE` | serve | optional local ACL file instead of Drive `_acl.json`; `acl` refuses to run while it's set |
 | `BOTVAULT_ACL_LOCK_FILE` | acl | optional ACL-lock override |
-| `XDG_RUNTIME_DIR` | acl | picks the per-user ACL lock dir |
 
 `BOTVAULT_OAUTH_REDIRECT_URL` is also a box env secret. It was used once for the
 consent and code exchange; `serve` doesn't read it.

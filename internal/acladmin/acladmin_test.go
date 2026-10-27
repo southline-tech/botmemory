@@ -461,3 +461,37 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("not empty: %+v", es)
 	}
 }
+
+// R4-3: the last-owner error names the operation.
+func TestLastOwnerMessageNamesOp(t *testing.T) {
+	m := store.NewMemory()
+	a := New(m)
+	if _, err := a.Grant(ctx, "pm", "p", "owner", GrantOpts{TokenOut: filepath.Join(t.TempDir(), "pm")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"revoke", "remove"} {
+		var err error
+		if op == "revoke" {
+			err = a.Revoke(ctx, "pm", false)
+		} else {
+			err = a.Remove(ctx, "pm", false)
+		}
+		if !errors.Is(err, ErrLastOwner) || !strings.Contains(err.Error(), "refusing to "+op+" ") {
+			t.Fatalf("%s: %v", op, err)
+		}
+	}
+}
+
+// R4-4: an ambiguous revoke write is ErrOutcomeUnknown unless a re-read settles it.
+func TestRevokeOutcomeUnknown(t *testing.T) {
+	m := store.NewMemory()
+	if _, err := New(m).Grant(ctx, "dev", "p", "write", GrantOpts{TokenOut: filepath.Join(t.TempDir(), "d")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(failNoSave{m}).Revoke(ctx, "dev", false); !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("failed revoke write: %v", err)
+	}
+	if err := New(&saveThenFail{Backend: m, failWrites: true}).Revoke(ctx, "dev", false); err != nil {
+		t.Fatalf("landed revoke with lost response: %v", err)
+	}
+}

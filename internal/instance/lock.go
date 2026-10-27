@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"syscall"
 )
 
@@ -29,6 +31,9 @@ var pidLine = regexp.MustCompile(`^[0-9]{1,10}\n?$`)
 // directory (not a symlink), owned by the current user, with no group or
 // other permission bits.
 func SecureDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%w: %q is not absolute", ErrUnsafeDir, dir)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("lock dir %s: %w", dir, err)
 	}
@@ -49,19 +54,24 @@ func SecureDir(dir string) error {
 	return nil
 }
 
-// UserDir is the per-user botvault lock directory: $XDG_RUNTIME_DIR/botvault
-// if set, else os.UserCacheDir()/botvault. It is created 0700 and checked by
-// SecureDir.
+// UserDir is the per-user botvault lock directory, <home>/.cache/botvault,
+// where <home> is the passwd home directory of the current uid. It does NOT
+// consult $HOME, $XDG_RUNTIME_DIR or $XDG_CACHE_HOME, so cron, ssh -c and
+// agent shells of the same user all get the same path. Created 0700 and
+// checked by SecureDir.
 func UserDir() (string, error) {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		c, err := os.UserCacheDir()
-		if err != nil {
-			return "", fmt.Errorf("no per-user lock dir: %w", err)
-		}
-		base = c
+	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		return "", fmt.Errorf("no per-user lock dir: %w", err)
 	}
-	d := filepath.Join(base, "botvault")
+	return userDirIn(u.HomeDir)
+}
+
+func userDirIn(home string) (string, error) {
+	if !filepath.IsAbs(home) {
+		return "", fmt.Errorf("%w: home %q is not absolute", ErrUnsafeDir, home)
+	}
+	d := filepath.Join(home, ".cache", "botvault")
 	if err := SecureDir(d); err != nil {
 		return "", err
 	}
@@ -74,7 +84,12 @@ func Acquire(path string) (*Lock, error) {
 	// O_NOFOLLOW: a planted symlink must not redirect our write to another
 	// file. No O_TRUNC: an existing file is only rewritten once it is known
 	// to be a regular file that is empty or holds a PID line.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	// Lstat first and O_NONBLOCK: a FIFO or device is never opened in a way
+	// that can block, and is refused before any write.
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", ErrNotLockFile, path)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("lock file %s: %w", path, err)
 	}

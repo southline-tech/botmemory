@@ -31,8 +31,9 @@ var (
 	ErrNoBot     = errors.New("acladmin: no such bot")
 	ErrTokenOut  = errors.New("acladmin: --token-out is required when a token is minted")
 	ErrConflicts = errors.New("acladmin: _acl.json kept changing underneath us; retry")
-	// ErrLastOwner: revoking would leave a project with no active owner.
-	ErrLastOwner = errors.New("acladmin: refusing to revoke the last active owner")
+	// ErrLastOwner: the revoke/remove would leave a project with no active
+	// owner. The returned error names the operation.
+	ErrLastOwner = errors.New("last active owner")
 	// ErrOutcomeUnknown: the ACL write failed in a way that may or may not have
 	// been applied and the ACL could not be re-read to tell. The token file
 	// is kept.
@@ -265,18 +266,26 @@ func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
 		if !ok {
 			return fmt.Errorf("%w: %q", ErrNoBot, bot)
 		}
-		if err := lastOwnerCheck(d, bot, force); err != nil {
+		if err := lastOwnerCheck(d, bot, force, "revoke"); err != nil {
 			return err
 		}
 		b.Revoked = true
 		d.Bots[bot] = b
 		return nil
 	})
+	revoked := func(d *acl.Doc) bool { b, ok := d.Bots[bot]; return ok && b.Revoked }
+	var wu *writeUnknownError
+	if errors.As(err, &wu) {
+		if a.verify(ctx, revoked) == nil {
+			return nil
+		}
+		return fmt.Errorf("%w: write failed (%v); run `botvault acl list` later to see whether %s is revoked", ErrOutcomeUnknown, wu.err, bot)
+	}
 	if err != nil {
 		return err
 	}
 	// Report success only once a re-read shows the bot revoked.
-	return a.verify(ctx, func(d *acl.Doc) bool { b, ok := d.Bots[bot]; return ok && b.Revoked })
+	return a.verify(ctx, revoked)
 }
 
 // Remove deletes bot's entry from the ACL entirely (token hash and roles).
@@ -288,7 +297,7 @@ func (a *Admin) Remove(ctx context.Context, bot string, force bool) error {
 		if _, ok := d.Bots[bot]; !ok {
 			return fmt.Errorf("%w: %q", ErrNoBot, bot)
 		}
-		if err := lastOwnerCheck(d, bot, force); err != nil {
+		if err := lastOwnerCheck(d, bot, force, "remove"); err != nil {
 			return err
 		}
 		delete(d.Bots, bot)
@@ -310,7 +319,7 @@ func (a *Admin) Remove(ctx context.Context, bot string, force bool) error {
 
 // lastOwnerCheck refuses (unless force) when bot is active and the only
 // active owner of some project.
-func lastOwnerCheck(d *acl.Doc, bot string, force bool) error {
+func lastOwnerCheck(d *acl.Doc, bot string, force bool, op string) error {
 	b := d.Bots[bot]
 	if force || b.Revoked {
 		return nil
@@ -333,7 +342,7 @@ func lastOwnerCheck(d *acl.Doc, bot string, force bool) error {
 	}
 	if len(orphaned) > 0 {
 		sort.Strings(orphaned)
-		return fmt.Errorf("%w of %v (%q); grant another owner first or use --force", ErrLastOwner, orphaned, bot)
+		return fmt.Errorf("acladmin: refusing to %s %q, the %w of %v; grant another owner first or use --force", op, bot, ErrLastOwner, orphaned)
 	}
 	return nil
 }

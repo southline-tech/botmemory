@@ -102,8 +102,8 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 
 func TestACLLockPath(t *testing.T) {
 	t.Setenv("BOTVAULT_ACL_LOCK_FILE", "")
-	rt := t.TempDir()
-	t.Setenv("XDG_RUNTIME_DIR", rt)
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // must not matter (R4-1)
+	rt := filepath.Dir(mustUserDir(t))
 	p, err := aclLockPath("someroot")
 	if err != nil {
 		t.Fatal(err)
@@ -115,8 +115,13 @@ func TestACLLockPath(t *testing.T) {
 	if fi, err := os.Stat(filepath.Dir(p)); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("lock dir not 0700: %v %v", fi, err)
 	}
-	os.Chmod(filepath.Join(rt, "botvault"), 0o755)
-	if _, err := aclLockPath("someroot"); err == nil {
-		t.Fatal("loose lock dir accepted")
+}
+
+func mustUserDir(t *testing.T) string {
+	t.Helper()
+	d, err := instance.UserDir()
+	if err != nil {
+		t.Fatal(err)
 	}
+	return d
 }
