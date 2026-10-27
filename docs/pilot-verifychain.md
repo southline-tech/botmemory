@@ -103,7 +103,13 @@ ACL stays in force for up to about 5 minutes.
 
 Only against memory and the fake Drive (`internal/acladmin`,
 `internal/drive` `TestACLAdminOnDrive`, `cmd/botvault` `TestACLCommandMemory`).
-No real pilot tokens have been granted.
+On real Drive, 2026-10-26: the three pilot bots (pm-verifychain owner,
+implementor-verifychain write, reviewer-verifychain write, on `verifychain`
+only) were granted and smoke-tested. Each token did put, get and search on
+verifychain and was denied on other projects. A throwaway bot, `qa-throwaway`,
+was granted, revoked, re-granted and revoked again, and then removed with
+`botvault acl remove`. `acl list` now shows exactly the three pilot bots, all
+active.
 
 ## Server environment and restart (names only, never values)
 
@@ -127,19 +133,28 @@ consent and code exchange; `serve` doesn't read it.
 The OAuth client id and secret live in the **box's env secrets** (already in the
 environment). They are never in a `.env` file, the repo, or chat.
 
-Restart recipe:
+Restart recipe. The binary isn't on PATH; `scripts/setup_box.sh` builds it at
+`$HOME/.local/bin/botvault` (`/home/box/.local/bin/botvault` on the box; override
+with `BOTVAULT_BIN`). Check it exists **before** stopping the running server:
 
 ```sh
-pkill -f 'botvault serve' || true                       # stop (the flock is released on exit)
+BIN=${BOTVAULT_BIN:-$HOME/.local/bin/botvault}
+[ -x "$BIN" ] || scripts/setup_box.sh || exit 1        # build first; never stop the server without a binary
+[ -x "$BIN" ] || { echo "no botvault binary at $BIN" >&2; exit 1; }
 export BOTVAULT_OAUTH_REFRESH_TOKEN="$(cat /workspace/loops/RAD-280-oauth/refresh_token)"
 export BOTVAULT_DRIVE_ROOT_ID="$(cat /workspace/loops/RAD-280-oauth/drive_root_id)"
 : "${BOTVAULT_OAUTH_CLIENT_ID:?missing}" "${BOTVAULT_OAUTH_CLIENT_SECRET:?missing}"
-nohup botvault serve >/workspace/loops/RAD-280-pilot/serve.log 2>&1 &   # binds 127.0.0.1:8787
+pkill -f 'botvault serve' || true                       # stop only now (the flock is released on exit)
+nohup "$BIN" serve >>/workspace/loops/RAD-280-pilot/serve.log 2>&1 &   # binds 127.0.0.1:8787
 sleep 2
 # health: there is no /health endpoint, so an unauthenticated POST to /mcp
 # should get 401 (server up, auth enforced)
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8787/mcp   # expect 401
 ```
+
+The server log (stdout and stderr) is appended to
+`/workspace/loops/RAD-280-pilot/serve.log`. It holds no tokens; check it first if
+the health check fails.
 
 For a full check, run an MCP `ping` with a bot's token (read from its file,
 never echoed).
