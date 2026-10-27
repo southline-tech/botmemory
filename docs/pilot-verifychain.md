@@ -1,0 +1,93 @@
+# verifychain-ai pilot (RAD-280 M3)
+
+Three bots share one botVault project, `verifychain`. No other project is
+granted, and there are no wildcards.
+
+| Bot | Role | Can do |
+|---|---|---|
+| `pm-verifychain` | `owner` | everything, plus `delete` (archive) and `reindex` |
+| `implementor-verifychain` | `write` | `get/list/search/history` plus `put/append` |
+| `reviewer-verifychain` | `read` | `get/list/search/history` only |
+
+**Role decision (open):** if the reviewer is meant to *record* its findings in
+botVault (for example appending to a `review-*` record), it needs `write`; with `read`
+it can only report back through another channel. botVault has no
+append-only role today. Recommendation: start the reviewer on `read`, and move it to
+`write` (`botvault acl grant reviewer-verifychain verifychain write`, which
+keeps the token) once reviewers start writing findings. Every write is still
+attributed through `updated_by`.
+
+## Granting (needs Brett's approval for real Drive)
+
+On the botVault host, using the same env as `serve` (OAuth env plus `BOTVAULT_DRIVE_ROOT_ID`):
+
+```sh
+scripts/pilot_verifychain.sh                                   # dry run: shows the 3 grant commands
+BOTVAULT_PILOT_ALLOW_DRIVE=1 scripts/pilot_verifychain.sh --apply
+```
+
+Each grant mints a fresh token and writes **only its SHA-256 hash** into
+`_acl.json` (conditional on the Drive file version, retried on a concurrent
+edit). It writes the raw token to `~/.config/botvault/pilot/<bot>/botvault.token`
+with mode 0600. That file must not already exist, and a symlink there is refused.
+The CLI prints the path and never the token. `serve` picks the grant up
+within 60s.
+
+## Getting each bot its token (never via chat)
+
+- Never paste a token into chat, Slack, Linear, an email, a commit, or a prompt.
+  Don't `cat` it into a terminal that is being recorded or logged.
+- **Same host (the pilot setup):** move the file into the bot's own config dir,
+  owned by that bot's user, at mode 600:
+  `install -m 600 -o <botuser> ~/.config/botvault/pilot/<bot>/botvault.token /home/<botuser>/.config/botvault/token`
+  then delete the staging copy (`shred -u` or `rm`).
+- **Different host:** copy over an authenticated channel (`scp`/`rsync` over SSH)
+  straight into the target path, then delete the staging copy. Don't use a
+  pastebin, shared drive, or chat attachment.
+- If a token might have been exposed, **rotate** it (see below) rather than
+  reasoning about it.
+
+## MCP config for each bot
+
+botVault listens only on loopback: `http://127.0.0.1:8787/mcp` (Streamable HTTP).
+The bot sends `Authorization: Bearer <token>`. Load the token from its file at
+launch so it never sits in a config that gets committed or shared:
+
+```sh
+export BOTVAULT_TOKEN="$(cat ~/.config/botvault/token)"   # in the bot's launcher, not a dotfile in git
+```
+
+```json
+{
+  "mcpServers": {
+    "botvault": {
+      "url": "http://127.0.0.1:8787/mcp",
+      "headers": { "Authorization": "Bearer ${BOTVAULT_TOKEN}" }
+    }
+  }
+}
+```
+
+(The exact env interpolation syntax depends on the MCP client. If the client
+can't interpolate, generate the config at launch into a mode-600 file outside
+git.) Every call names `project: "verifychain"`, and other projects are denied.
+
+## Revoke / rotate
+
+```sh
+botvault acl list                                    # bots, roles, active/REVOKED; no hashes
+botvault acl revoke reviewer-verifychain             # stops working within 60s
+botvault acl grant reviewer-verifychain verifychain read --rotate \
+  --token-out ~/.config/botvault/pilot/reviewer-verifychain/botvault.token.new
+```
+
+`--rotate` replaces the hash (so the old token dies) and clears `revoked`. A
+revoked bot can only be re-enabled with `--rotate`. Roles are kept when a bot is
+revoked. Note the README caveat: while `_acl.json` is unreadable, the last good
+ACL stays in force for up to about 5 minutes.
+
+## Tested
+
+Only against memory and the fake Drive (`internal/acladmin`,
+`internal/drive` `TestACLAdminOnDrive`, `cmd/botvault` `TestACLCommandMemory`).
+No real pilot tokens have been granted.

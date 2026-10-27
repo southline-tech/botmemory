@@ -17,7 +17,7 @@ MCP tools over Streamable HTTP at `POST /mcp`: `list_projects`, `list`, `get`, `
 ```sh
 cp .env.example .env   # fill in; .env is gitignored
 go build -o botvault ./cmd/botvault && ./botvault serve
-for p in acl store vault mcp drive; do go test -count=1 -race ./internal/$p/; done   # one suite at a time
+for p in $(go list ./...); do go test -count=1 -race "$p"; done   # every package (cmd/botvault, acl, acladmin, drive, instance, mcp, store, vault), one at a time
 ```
 
 ### Safety notes
@@ -51,3 +51,28 @@ BOTVAULT_SMOKE_TOKEN=... BOTVAULT_SMOKE_PROJECT=smoke-tmp scripts/smoke_drive.py
 # BOTVAULT_SMOKE_M1=1 limits it to the M1 tools; BOTVAULT_URL overrides the endpoint.
 ```
 The script refuses any project not named `smoke-*` unless `BOTVAULT_SMOKE_TEST_ROOT=1` is set (use that only against a test vault root). It never deletes anything, so clean up by hand afterwards: delete `projects/<project>/` in the vault's Drive folder, remove the smoke bot from `_acl.json` (back to `{"bots":{}}` if it was the only one), and discard the token.
+
+## M3
+
+### ACL admin CLI
+Edits `_acl.json` in the configured backend (same env as `serve`). Every edit is a conditional write on the current Drive version, retried up to 5 times on a concurrent edit:
+
+```sh
+botvault acl grant <bot> <project> <role> --token-out FILE [--rotate]   # role: read|write|owner
+botvault acl revoke <bot>
+botvault acl list                                                       # bots, roles, active/REVOKED; never hashes
+```
+- A new bot (or `--rotate`) gets a fresh token. Only its SHA-256 goes into `_acl.json`, and the raw token is written only to `FILE`, which is created with mode 0600 and must not already exist (symlinks are refused). The CLI never prints the token. If the ACL write fails, `FILE` is removed.
+- Granting to an existing bot adds or changes the role and keeps its token. A revoked bot can only be re-enabled with `--rotate`. `revoke` keeps roles.
+- No wildcard projects. `serve` picks changes up within 60s.
+- With `BOTVAULT_BACKEND=memory` the CLI edits the CLI process's own memory, which is only useful in tests. With `BOTVAULT_ACL_FILE` set, it refuses (edit that local file by hand).
+
+### Rebuilding after a box wipe
+`scripts/setup_box.sh [--test]` installs the Go version from `go.mod` if missing (sha256 checked against go.dev), builds `~/.local/bin/botvault`, and optionally runs every package's tests one at a time. It loads a mode-600 `.env` if present and reports the required env vars **by name only** (set/MISSING). It also checks the Drive root id against `~/.config/botvault/drive_root_id`, writing that file from `BOTVAULT_DRIVE_ROOT_ID` if missing and refusing if they differ. The script contains no secrets: restore `.env` and the OAuth refresh token yourself.
+
+### Hardening
+- The lock file is opened with `O_NOFOLLOW`, so a symlink planted at the (world-writable `/var/tmp`) lock path is refused.
+- CI: `persist-credentials: false` on checkout, and a 15-minute job timeout.
+
+### verifychain-ai pilot
+See [docs/pilot-verifychain.md](docs/pilot-verifychain.md) and `scripts/pilot_verifychain.sh` (dry run by default; real Drive grants need an explicit opt-in and approval).
