@@ -579,6 +579,9 @@ func TestWriteIfErrorAfterSaveKeepsMarker(t *testing.T) {
 			if _, err := m.Read(ctx, dirtyPath("vc")); err != nil {
 				t.Fatalf("marker removed: %v", err)
 			}
+			if n := inflight(v, "vc"); n != 0 {
+				t.Fatalf("inflight=%d, want 0", n)
+			}
 			if !v.isDirty(ctx, "vc") {
 				t.Fatal("not dirty in-process")
 			}
@@ -597,14 +600,32 @@ func TestWriteIfErrorAfterSaveKeepsMarker(t *testing.T) {
 	}
 }
 
-// R5-1 converse: a CONFLICT (ErrPrecondition) proves nothing was saved, so it
-// does not dirty the project.
+// preconditionFails reports a lost race at WriteIf time (nothing saved).
+type preconditionFails struct{ *store.Memory }
+
+func (s preconditionFails) WriteIf(ctx context.Context, p string, data []byte, rev string) error {
+	if strings.Contains(p, "/records/") {
+		return store.ErrPrecondition
+	}
+	return s.Memory.WriteIf(ctx, p, data, rev)
+}
+
+func inflight(v *Vault, p string) int {
+	s := v.markState(p)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inflight
+}
+
+// R5-1 converse / R6-1: a WriteIf ErrPrecondition proves nothing was saved,
+// so it reaches the committed=false branch and does not dirty the project.
 func TestConflictDoesNotDirty(t *testing.T) {
-	v, m := newVault(t)
-	if _, err := put(v, "pm", nil, "one"); err != nil {
+	v0, m := newVault(t)
+	if _, err := put(v0, "pm", nil, "one"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := put(v, "pm", nil, "again"); !errors.Is(err, ErrConflict) {
+	v := New(preconditionFails{m}, v0.acl)
+	if _, err := put(v, "pm", iv(1), "two"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("want conflict, got %v", err)
 	}
 	if v.isDirty(ctx, "vc") {
@@ -612,5 +633,8 @@ func TestConflictDoesNotDirty(t *testing.T) {
 	}
 	if _, err := m.Read(ctx, dirtyPath("vc")); err == nil {
 		t.Fatal("marker left after conflict")
+	}
+	if n := inflight(v, "vc"); n != 0 {
+		t.Fatalf("inflight=%d, want 0", n)
 	}
 }
