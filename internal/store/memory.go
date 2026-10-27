@@ -14,6 +14,8 @@ type Memory struct {
 	files map[string]mfile
 	// FailWrite, if set, is consulted before every write (fault injection).
 	FailWrite func(path string) error
+	// FailRead, if set, is consulted before every read (fault injection).
+	FailRead func(path string) error
 	// MaxRead, if > 0, makes reads of larger files fail with ErrTooLarge
 	// (mirrors the Drive backend's read cap).
 	MaxRead int
@@ -32,6 +34,11 @@ func (m *Memory) Read(ctx context.Context, p string) ([]byte, error) {
 }
 
 func (m *Memory) ReadRev(_ context.Context, p string) ([]byte, string, error) {
+	if m.FailRead != nil {
+		if err := m.FailRead(clean(p)); err != nil {
+			return nil, "", err
+		}
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	f, ok := m.files[clean(p)]
@@ -71,6 +78,13 @@ func (m *Memory) write(p string, data []byte, rev *string) error {
 		}
 	}
 	m.files[clean(p)] = mfile{append([]byte(nil), data...), f.rev + 1}
+	return nil
+}
+
+func (m *Memory) Delete(_ context.Context, p string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.files, clean(p))
 	return nil
 }
 

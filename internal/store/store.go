@@ -32,4 +32,6 @@ type Backend interface {
 	// List returns the names (not full paths) of direct children of dir.
 	// Folders are suffixed with "/". A missing dir yields an empty list.
 	List(ctx context.Context, dir string) ([]string, error)
+	// Delete removes a file. Deleting a missing file is not an error.
+	Delete(ctx context.Context, path string) error
 }

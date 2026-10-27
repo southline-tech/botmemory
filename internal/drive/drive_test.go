@@ -128,6 +128,14 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		id := f.add(meta.Name, meta.MimeType, meta.Parents[0], data)
 		json.NewEncoder(w).Encode(map[string]string{"id": id})
+	case r.Method == "DELETE" && strings.HasPrefix(p, "/drive/v3/files/"):
+		id := strings.TrimPrefix(p, "/drive/v3/files/")
+		if f.files[id] == nil {
+			http.NotFound(w, r)
+			return
+		}
+		delete(f.files, id)
+		w.WriteHeader(204)
 	default:
 		http.Error(w, "unhandled "+r.Method+" "+p, 500)
 	}
@@ -497,5 +505,21 @@ func TestRetryBudget(t *testing.T) {
 	}
 	if d := DefaultRetry(); d.Budget <= 0 || d.Budget > 45*time.Second {
 		t.Fatalf("default budget %v must be set and < 60s WriteTimeout with margin", d.Budget)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	_, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	b.Write(ctx, "p/_index.dirty", []byte("1"))
+	if err := b.Delete(ctx, "p/_index.dirty"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(ctx, "p/_index.dirty"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("still there: %v", err)
+	}
+	if err := b.Delete(ctx, "p/_index.dirty"); err != nil {
+		t.Fatalf("missing file: %v", err)
 	}
 }

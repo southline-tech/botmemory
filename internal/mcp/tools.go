@@ -1,15 +1,20 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/radiancelux/botvault/internal/vault"
 )
 
 var errUnknownTool = errors.New("unknown tool")
+
+// CallTimeout bounds one tool call (below the server's 60s WriteTimeout).
+var CallTimeout = 50 * time.Second
 
 type args struct {
 	Project   string   `json:"project"`
@@ -37,7 +42,10 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			return nil, fmt.Errorf("%w: %v", vault.ErrInvalid, err)
 		}
 	}
-	ctx := r.Context()
+	// Every tool call gets a deadline inside the HTTP server's 60s
+	// WriteTimeout; Drive requests and retry sleeps all honour ctx.
+	ctx, cancel := context.WithTimeout(r.Context(), CallTimeout)
+	defer cancel()
 	switch name {
 	case "list_projects":
 		return s.V.ListProjects(ctx, bot)
@@ -55,8 +63,11 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 	case "history":
 		return s.V.History(ctx, bot, a.Project, a.Key)
 	case "reindex":
-		n, err := s.V.Reindex(ctx, bot, a.Project)
-		return map[string]int{"entries": n}, err
+		n, skipped, err := s.V.Reindex(ctx, bot, a.Project)
+		if skipped == nil {
+			skipped = []string{}
+		}
+		return map[string]any{"entries": n, "skipped": skipped}, err
 	case "delete":
 		return s.V.Delete(ctx, bot, a.Project, a.Key, a.IfVersion)
 	}
@@ -100,7 +111,7 @@ var toolDefs = []map[string]any{
 		"inputSchema": obj(map[string]any{"project": str, "query": str, "kind": kindProp, "tag": str, "status": str, "limit": integer}, "project", "query")},
 	{"name": "history", "description": "List every version of a key (newest first) with author and time; fetch one with get(version=N).",
 		"inputSchema": obj(addr, "project", "key")},
-	{"name": "reindex", "description": "Rebuild a project's search index from its records. Project owners only.",
+	{"name": "reindex", "description": "Rebuild a project's search index from its records. Project owners only. Returns entries and any skipped (unparseable) record files.",
 		"inputSchema": obj(map[string]any{"project": str}, "project")},
 	{"name": "delete", "description": "Soft delete: marks the record archived (new version, history kept). Project owners only.",
 		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "project", "key")},

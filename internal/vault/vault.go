@@ -25,6 +25,8 @@ var (
 	ErrConflict  = errors.New("version conflict")
 	ErrNotFound  = errors.New("not found")
 	ErrInvalid   = errors.New("invalid argument")
+	// ErrCorrupt marks a stored record that exists but cannot be parsed.
+	ErrCorrupt = errors.New("corrupt record")
 )
 
 // Kinds is the closed set of record kinds (spec: strict kinds).
@@ -68,10 +70,9 @@ type Vault struct {
 	acl   func() *acl.ACL
 	now   func() time.Time
 	locks sync.Map // record path or "proj:<p>" -> *sync.Mutex
-	// dirty holds projects whose _index.json may be stale because a derived
-	// update failed after a durable record write; the next index access
-	// rebuilds it from records (and saves it) instead of trusting the file.
-	dirty sync.Map // project -> struct{}
+	// dirty caches each project's index state ("dirty"/"clean"); the
+	// durable source is the projects/<p>/_index.dirty marker in storage.
+	dirty sync.Map // project -> bool (true = dirty)
 }
 
 func New(b store.Backend, aclFn func() *acl.ACL) *Vault {
@@ -129,7 +130,7 @@ func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
 	}
 	var r Record
 	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, fmt.Errorf("corrupt record %s: %w", p, err)
+		return nil, fmt.Errorf("%w %s: %v", ErrCorrupt, p, err)
 	}
 	r.rev = rev
 	return &r, nil
@@ -154,6 +155,10 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 			return err
 		}
 	}
+	// Mark the index dirty durably before the record commits, so a crash,
+	// deadline or failure anywhere between here and the index save leaves a
+	// marker that forces a rebuild on next access (survives restarts).
+	v.markDirty(ctx, project)
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
 	err := v.b.WriteIf(ctx, recPath(project, next.Key), b, rev)

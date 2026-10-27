@@ -336,6 +336,23 @@ func (d *Backend) write(ctx context.Context, p string, data []byte, rev *string)
 	return d.do(req, nil)
 }
 
+// Delete permanently deletes a file the app created (drive.file scope).
+// A missing file is not an error.
+func (d *Backend) Delete(ctx context.Context, p string) error {
+	_, f, err := d.lookup(ctx, p, false)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	req, _ := http.NewRequestWithContext(ctx, "DELETE", d.Base+"/drive/v3/files/"+url.PathEscape(f.ID)+"?supportsAllDrives=true", nil)
+	if err := d.do(req, nil); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 func (d *Backend) List(ctx context.Context, dir string) ([]string, error) {
 	pid, err := d.folderID(ctx, dir, false)
 	if err == store.ErrNotFound {

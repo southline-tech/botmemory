@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/radiancelux/botvault/internal/acl"
 	"github.com/radiancelux/botvault/internal/store"
@@ -214,7 +216,38 @@ func TestM2Tools(t *testing.T) {
 	if isErr, txt := call(t, s, "impl-tok", "reindex", map[string]any{"project": "vc"}); !isErr || !strings.Contains(txt, "FORBIDDEN") {
 		t.Fatalf("non-owner reindex: %s", txt)
 	}
-	if isErr, txt := call(t, s, "pm-tok", "reindex", map[string]any{"project": "vc"}); isErr || !strings.Contains(txt, "1") {
+	if isErr, txt := call(t, s, "pm-tok", "reindex", map[string]any{"project": "vc"}); isErr || !strings.Contains(txt, `"entries": 1`) || !strings.Contains(txt, `"skipped": []`) {
 		t.Fatalf("reindex: %s", txt)
+	}
+}
+
+// deadlineSpy records the deadline of the ctx each backend call receives.
+type deadlineSpy struct {
+	*store.Memory
+	left time.Duration
+}
+
+func (d *deadlineSpy) ReadRev(ctx context.Context, p string) ([]byte, string, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		d.left = time.Until(dl)
+	} else {
+		d.left = -1
+	}
+	return d.Memory.ReadRev(ctx, p)
+}
+
+// R2-4: every tool call runs under a CallTimeout (50s) deadline.
+func TestToolCallDeadline(t *testing.T) {
+	if CallTimeout <= 0 || CallTimeout >= 60*time.Second {
+		t.Fatalf("CallTimeout %v must be below the 60s WriteTimeout", CallTimeout)
+	}
+	a, _ := acl.Parse([]byte(fmt.Sprintf(`{"bots":{"pm":{"token_sha256":%q,"roles":{"vc":"owner"}}}}`, acl.HashToken("pm-tok"))))
+	f := func() *acl.ACL { return a }
+	spy := &deadlineSpy{Memory: store.NewMemory()}
+	s := httptest.NewServer(&Server{V: vault.New(spy, f), ACL: f})
+	t.Cleanup(s.Close)
+	call(t, s, "pm-tok", "get", map[string]any{"project": "vc", "key": "nope"})
+	if spy.left <= 0 || spy.left > CallTimeout {
+		t.Fatalf("backend ctx deadline left=%v, want (0, %v]", spy.left, CallTimeout)
 	}
 }

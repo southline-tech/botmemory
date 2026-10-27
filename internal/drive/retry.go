@@ -12,9 +12,10 @@ import (
 
 // Retry policy for transient Drive failures (HTTP 429, 5xx, transport
 // errors): bounded exponential backoff with full jitter, honoring
-// Retry-After. Defaults: 5 attempts, 500ms base, 16s cap, and a 30s total
-// sleep budget so a retried call always finishes well inside the server's
-// 60s WriteTimeout (one call may make several Drive requests).
+// Retry-After. Defaults: 5 attempts, 500ms base, 16s cap, and a 30s cap on
+// the total backoff sleep of one Drive request. That bounds a single request,
+// not a tool call (which makes several requests); the MCP layer gives each
+// tool call a 50s deadline (ctx) so it finishes inside the 60s WriteTimeout.
 type Retry struct {
 	MaxAttempts int
 	Base, Max   time.Duration

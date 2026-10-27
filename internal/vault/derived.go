@@ -88,7 +88,7 @@ func entryOf(r *Record) IndexEntry {
 func (v *Vault) afterWrite(ctx context.Context, op, project string, r *Record) error {
 	defer v.lock("proj:" + project)()
 	if err := v.updateIndex(ctx, project, r); err != nil {
-		v.dirty.Store(project, struct{}{})
+		v.dirty.Store(project, true)
 		return fmt.Errorf("index: %w", err)
 	}
 	line, _ := json.Marshal(LogEntry{TS: r.UpdatedAt, Bot: r.UpdatedBy, Op: op, Key: r.Key, Kind: r.Kind, Version: r.Version})
@@ -103,14 +103,50 @@ func (v *Vault) updateIndex(ctx context.Context, project string, r *Record) erro
 	if err != nil {
 		return err
 	}
-	if !rebuilt { // a rebuild already reflects r (records are the source of truth)
-		idx.Entries[r.Key] = entryOf(r)
-		if err := v.saveIndex(ctx, project, idx); err != nil {
-			return err
-		}
+	if rebuilt { // a rebuild already reflects r and cleared the marker
+		return nil
 	}
-	v.dirty.Delete(project)
+	idx.Entries[r.Key] = entryOf(r)
+	if err := v.saveIndex(ctx, project, idx); err != nil {
+		return err
+	}
+	return v.clearDirty(ctx, project)
+}
+
+func dirtyPath(p string) string { return path.Join("projects", p, "_index.dirty") }
+
+// markDirty writes the durable projects/<p>/_index.dirty marker (before a
+// record commit). Best effort: if it fails the in-process mark still forces
+// a rebuild for this server's lifetime.
+func (v *Vault) markDirty(ctx context.Context, project string) {
+	v.dirty.Store(project, true)
+	if err := v.b.Write(ctx, dirtyPath(project), []byte("1\n")); err != nil {
+		log.Printf("botvault: %s: writing index dirty marker failed: %v", project, err)
+	}
+}
+
+// clearDirty removes the marker after the index is saved.
+func (v *Vault) clearDirty(ctx context.Context, project string) error {
+	if err := v.b.Delete(ctx, dirtyPath(project)); err != nil {
+		v.dirty.Store(project, true)
+		return fmt.Errorf("clear dirty marker: %w", err)
+	}
+	v.dirty.Store(project, false)
 	return nil
+}
+
+// isDirty consults the in-process cache, then (first access after a
+// restart) the durable marker. An unreadable marker counts as dirty.
+func (v *Vault) isDirty(ctx context.Context, project string) bool {
+	if d, ok := v.dirty.Load(project); ok {
+		return d.(bool)
+	}
+	_, err := v.b.Read(ctx, dirtyPath(project))
+	d := !errors.Is(err, store.ErrNotFound)
+	if err == nil || errors.Is(err, store.ErrNotFound) {
+		v.dirty.Store(project, d) // cache only a definite answer
+	}
+	return d
 }
 
 // appendLog appends to log.jsonl, rotating it into log-NNNN.jsonl first when
@@ -157,7 +193,7 @@ func (v *Vault) nextLogSeg(ctx context.Context, project string) (int, error) {
 // time). rebuilt reports whether it came from records. Caller must hold the
 // project lock.
 func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (idx *Index, rebuilt bool, err error) {
-	if _, dirty := v.dirty.Load(project); !rebuild && !dirty {
+	if !rebuild && !v.isDirty(ctx, project) {
 		data, err := v.b.Read(ctx, indexPath(project))
 		if err == nil {
 			var idx Index
@@ -169,40 +205,55 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (id
 			return nil, false, err
 		}
 	}
-	idx, err = v.rebuildIndex(ctx, project)
+	idx, _, err = v.rebuildIndex(ctx, project)
 	if err != nil {
+		v.dirty.Store(project, true)
 		return nil, false, err
 	}
 	if err := v.saveIndex(ctx, project, idx); err != nil {
-		v.dirty.Store(project, struct{}{})
+		v.dirty.Store(project, true)
 		log.Printf("botvault: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
-	} else {
-		v.dirty.Delete(project)
+	} else if err := v.clearDirty(ctx, project); err != nil {
+		log.Printf("botvault: %s: %v (will rebuild again)", project, err)
 	}
 	return idx, true, nil
 }
 
-// rebuildIndex builds an index from records, skipping (and logging) any
-// record that cannot be read or parsed so one bad file cannot break search.
-func (v *Vault) rebuildIndex(ctx context.Context, project string) (*Index, error) {
+// rebuildIndex builds an index from records. Only records that exist but
+// cannot be parsed (ErrCorrupt) are skipped and logged, and returned as
+// skipped. Any other error (transient Drive 5xx/429 after retries,
+// store.ErrTooLarge, ctx cancellation/deadline) aborts the rebuild so a
+// partial index is never saved; callers leave the project dirty.
+func (v *Vault) rebuildIndex(ctx context.Context, project string) (*Index, []string, error) {
 	idx := &Index{Entries: map[string]IndexEntry{}}
 	dir := path.Join("projects", project, "records")
 	names, err := v.b.List(ctx, dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var skipped []string
 	for _, n := range names {
 		if !strings.HasSuffix(n, ".json") {
 			continue
 		}
 		r, err := v.load(ctx, path.Join(dir, n))
-		if err != nil {
-			log.Printf("botvault: %s: skipping record %s in index rebuild: %v", project, n, err)
+		if errors.Is(err, ErrCorrupt) {
+			log.Printf("botvault: %s: skipping unparseable record %s in index rebuild: %v", project, n, err)
+			skipped = append(skipped, n)
 			continue
+		}
+		if errors.Is(err, ErrNotFound) {
+			continue // deleted between List and Read
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("rebuild index %s: %w", project, err)
 		}
 		idx.Entries[r.Key] = entryOf(r)
 	}
-	return idx, nil
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return idx, skipped, nil
 }
 
 func (v *Vault) saveIndex(ctx context.Context, project string, idx *Index) error {
@@ -211,24 +262,28 @@ func (v *Vault) saveIndex(ctx context.Context, project string, idx *Index) error
 }
 
 // Reindex rebuilds a project's _index.json from its records. Owners only.
-func (v *Vault) Reindex(ctx context.Context, bot, project string) (int, error) {
+// It returns the entry count and the record files skipped as unparseable.
+func (v *Vault) Reindex(ctx context.Context, bot, project string) (int, []string, error) {
 	if err := validName("project", project); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if err := v.need(bot, project, acl.Owner); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer v.lock("proj:" + project)()
-	idx, err := v.rebuildIndex(ctx, project)
+	idx, skipped, err := v.rebuildIndex(ctx, project)
 	if err != nil {
-		return 0, err
+		v.dirty.Store(project, true)
+		return 0, nil, err
 	}
 	if err := v.saveIndex(ctx, project, idx); err != nil {
-		v.dirty.Store(project, struct{}{})
-		return 0, err
+		v.dirty.Store(project, true)
+		return 0, nil, err
 	}
-	v.dirty.Delete(project)
-	return len(idx.Entries), nil
+	if err := v.clearDirty(ctx, project); err != nil {
+		return 0, nil, err
+	}
+	return len(idx.Entries), skipped, nil
 }
 
 // History lists every version of a key, newest first.

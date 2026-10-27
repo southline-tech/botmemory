@@ -5,20 +5,28 @@ Exercises every MCP tool against a live server and prints one PASS/FAIL line
 per check. Reads everything from the environment; never prints the token.
 
   BOTVAULT_SMOKE_TOKEN    bearer token with owner on BOTVAULT_SMOKE_PROJECT (required)
-  BOTVAULT_SMOKE_PROJECT  project to use (default: smoke); use a throwaway one
+  BOTVAULT_SMOKE_PROJECT  throwaway project; must start with "smoke-" (default: smoke-test)
+  BOTVAULT_SMOKE_TEST_ROOT=1  allow any project name (only against a test vault root)
   BOTVAULT_URL            default http://127.0.0.1:8787/mcp
   BOTVAULT_SMOKE_M1=1     only the M1 tools (no search/history/reindex)
 
 Exit status is non-zero if any check fails.
+
+The script only writes; it does not delete. Afterwards clean up by hand:
+delete projects/<project>/ in the vault's Drive folder, remove the smoke bot
+from _acl.json, and discard the token (see README "Real-Drive smoke test").
 """
 import json, os, sys, time, urllib.error, urllib.request
 
 URL = os.environ.get("BOTVAULT_URL", "http://127.0.0.1:8787/mcp")
 TOKEN = os.environ.get("BOTVAULT_SMOKE_TOKEN", "")
-PROJECT = os.environ.get("BOTVAULT_SMOKE_PROJECT", "smoke")
+PROJECT = os.environ.get("BOTVAULT_SMOKE_PROJECT", "smoke-test")
 M1 = os.environ.get("BOTVAULT_SMOKE_M1") == "1"
 if not TOKEN:
     sys.exit("BOTVAULT_SMOKE_TOKEN is not set")
+if not PROJECT.startswith("smoke-") and os.environ.get("BOTVAULT_SMOKE_TEST_ROOT") != "1":
+    sys.exit(f"refusing to write to project {PROJECT!r}: use a smoke-* project "
+             "(or set BOTVAULT_SMOKE_TEST_ROOT=1 against a test vault root)")
 
 
 def call(name, args, tok=None):
@@ -82,4 +90,5 @@ bogus = "bv_smoke_not_in_acl"
 check("unknown token denied (list_projects)", call("list_projects", {}, bogus) == (False, "HTTP 401"))
 check("unknown token denied (get)", call("get", A, bogus) == (False, "HTTP 401"))
 print(f"{'ALL PASS' if not fails else str(fails) + ' FAILED'} (project {PROJECT}, key {key})")
+print(f"cleanup: delete projects/{PROJECT}/ in Drive, drop the smoke bot from _acl.json, discard the token")
 sys.exit(1 if fails else 0)

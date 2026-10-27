@@ -3,6 +3,7 @@ package vault
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -88,10 +89,10 @@ func TestIndexSelfHealsAndReindex(t *testing.T) {
 	if hits, err := v.Search(ctx, "pm", "vc", "findme", ListFilter{}, 0); err != nil || len(hits) != 1 {
 		t.Fatalf("corrupt index not rebuilt: %v %v", hits, err)
 	}
-	if _, err := v.Reindex(ctx, "impl", "vc"); !errors.Is(err, ErrForbidden) {
+	if _, _, err := v.Reindex(ctx, "impl", "vc"); !errors.Is(err, ErrForbidden) {
 		t.Fatal("non-owner reindexed")
 	}
-	if n, err := v.Reindex(ctx, "pm", "vc"); err != nil || n != 1 {
+	if n, _, err := v.Reindex(ctx, "pm", "vc"); err != nil || n != 1 {
 		t.Fatalf("reindex %d %v", n, err)
 	}
 }
@@ -108,7 +109,7 @@ func TestDerivedFailureDoesNotFailWrite(t *testing.T) {
 		t.Fatalf("write failed due to index: %v", err)
 	}
 	m.FailWrite = nil
-	if n, _ := v.Reindex(ctx, "pm", "vc"); n != 1 {
+	if n, _, _ := v.Reindex(ctx, "pm", "vc"); n != 1 {
 		t.Fatal("reindex did not recover")
 	}
 }
@@ -166,8 +167,11 @@ func TestStaleIndexRebuiltAfterDerivedFailure(t *testing.T) {
 	if idx.Entries["a"].Status != StatusArchived {
 		t.Fatalf("index not saved: %+v", idx.Entries["a"])
 	}
-	if _, d := v.dirty.Load("vc"); d {
+	if v.isDirty(ctx, "vc") {
 		t.Fatal("still dirty")
+	}
+	if _, err := m.Read(ctx, dirtyPath("vc")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("dirty marker not removed")
 	}
 }
 
@@ -233,5 +237,89 @@ func TestLogRotationAndCap(t *testing.T) {
 	m.MaxRead = 10
 	if err := v.appendLog(ctx, "vc", []byte("x\n")); !errors.Is(err, store.ErrTooLarge) {
 		t.Fatalf("want ErrTooLarge, got %v", err)
+	}
+}
+
+// R2-1: only unparseable records are skipped (and reported by reindex); any
+// other read error aborts the rebuild without saving and leaves it dirty.
+func TestRebuildSkipsOnlyCorrupt(t *testing.T) {
+	v, m := newVault(t)
+	v.Put(ctx, "pm", PutInput{Project: "vc", Key: "a", Title: "alpha"})
+	v.Put(ctx, "pm", PutInput{Project: "vc", Key: "b", Title: "beta"})
+	m.Write(ctx, recPath("vc", "bad"), []byte("{not json"))
+	n, skipped, err := v.Reindex(ctx, "pm", "vc")
+	if err != nil || n != 2 || len(skipped) != 1 || skipped[0] != "bad.json" {
+		t.Fatalf("reindex n=%d skipped=%v err=%v", n, skipped, err)
+	}
+	before, _ := m.Read(ctx, indexPath("vc"))
+	for _, tc := range []struct {
+		name string
+		max  int
+		ctx  func() context.Context
+	}{
+		{"too large", 20, func() context.Context { return ctx }},
+		{"cancelled", 0, func() context.Context { c, cancel := context.WithCancel(ctx); cancel(); return c }},
+	} {
+		m.MaxRead = tc.max
+		if _, _, err := v.Reindex(tc.ctx(), "pm", "vc"); err == nil {
+			t.Fatalf("%s: rebuild did not abort", tc.name)
+		}
+		m.MaxRead = 0
+		after, _ := m.Read(ctx, indexPath("vc"))
+		if !bytes.Equal(before, after) {
+			t.Fatalf("%s: partial index saved", tc.name)
+		}
+		if !v.isDirty(ctx, "vc") {
+			t.Fatalf("%s: not left dirty", tc.name)
+		}
+	}
+	// Transient backend error on a record read (e.g. Drive 503 after retries).
+	m.FailRead = func(p string) error {
+		if strings.HasSuffix(p, "records/a.json") {
+			return errors.New("drive: upstream error (HTTP 503)")
+		}
+		return nil
+	}
+	if _, err := v.Search(ctx, "pm", "vc", "beta", ListFilter{}, 0); err == nil {
+		t.Fatal("search over a dirty index with a transient error must fail, not return a partial index")
+	}
+	m.FailRead = nil
+	after, _ := m.Read(ctx, indexPath("vc"))
+	if !bytes.Equal(before, after) || !v.isDirty(ctx, "vc") {
+		t.Fatal("transient: partial index saved or dirty cleared")
+	}
+	if hits, err := v.Search(ctx, "pm", "vc", "alpha", ListFilter{}, 0); err != nil || len(hits) != 1 || v.isDirty(ctx, "vc") {
+		t.Fatalf("recovery: %v %v", hits, err)
+	}
+}
+
+// R2-2: the dirty mark is durable. A failed index update leaves
+// _index.dirty in storage; a fresh Vault (restart) sees it and rebuilds.
+func TestDirtyMarkerSurvivesRestart(t *testing.T) {
+	v, m := newVault(t)
+	v.Put(ctx, "pm", PutInput{Project: "vc", Key: "a", Title: "alpha"})
+	if _, err := m.Read(ctx, dirtyPath("vc")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("marker left after a clean write")
+	}
+	m.FailWrite = func(p string) error {
+		if strings.HasSuffix(p, "_index.json") {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	if _, err := v.Delete(ctx, "pm", "vc", "a", iv(1)); err != nil {
+		t.Fatal(err)
+	}
+	m.FailWrite = nil
+	if _, err := m.Read(ctx, dirtyPath("vc")); err != nil {
+		t.Fatalf("no durable marker: %v", err)
+	}
+	v2 := New(m, v.acl) // restart: empty in-process state, same storage
+	hits, err := v2.Search(ctx, "pm", "vc", "alpha", ListFilter{}, 0)
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("restart served stale index: %+v %v", hits, err)
+	}
+	if _, err := m.Read(ctx, dirtyPath("vc")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("marker not removed after rebuild")
 	}
 }
