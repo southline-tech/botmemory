@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,8 +27,8 @@ func newVault(t *testing.T) (*Vault, *store.Memory) {
 	}
 	m := store.NewMemory()
 	v := New(m, func() *acl.ACL { return a })
-	n := 0
-	v.SetClock(func() time.Time { n++; return time.Date(2026, 10, 26, 0, 0, n, 0, time.UTC) })
+	var n atomic.Int64 // atomic: concurrent-writer tests share the clock
+	v.SetClock(func() time.Time { return time.Date(2026, 10, 26, 0, 0, int(n.Add(1)), 0, time.UTC) })
 	return v, m
 }
 

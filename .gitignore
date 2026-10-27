@@ -10,3 +10,7 @@ acl.local.json
 data/
 /botvault
 *.test
+
+# python bytecode
+__pycache__/
+*.pyc

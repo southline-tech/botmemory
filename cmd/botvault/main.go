@@ -1,6 +1,7 @@
 // Command botvault runs the botVault MCP server.
 //
 //	botvault serve          # serve MCP over HTTP (see .env.example)
+//	botvault bootstrap      # create the botVault root folder in Drive, print its id
 //	botvault mint-token BOT # print a new token + the hash to put in _acl.json
 package main
 
@@ -32,7 +33,7 @@ const driveScope = "https://www.googleapis.com/auth/drive.file"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: botvault serve | mint-token BOT_ID")
+		fmt.Fprintln(os.Stderr, "usage: botvault serve | bootstrap | mint-token BOT_ID")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -45,6 +46,10 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Printf("bot:          %s\ntoken:        %s   (give to the bot; never commit)\ntoken_sha256: %s   (put in _acl.json)\n", os.Args[2], tok, hash)
+	case "bootstrap":
+		if err := bootstrap(context.Background()); err != nil {
+			log.Fatal(err)
+		}
 	case "serve":
 		if err := serve(); err != nil {
 			log.Fatal(err)
@@ -65,8 +70,38 @@ func backend(ctx context.Context) (store.Backend, error) {
 	}
 	root := os.Getenv("BOTVAULT_DRIVE_ROOT_ID")
 	if root == "" {
-		return nil, errors.New("BOTVAULT_DRIVE_ROOT_ID is required for the drive backend")
+		return nil, errors.New("BOTVAULT_DRIVE_ROOT_ID is required for the drive backend (run `botvault bootstrap` to create one)")
 	}
+	hc, err := driveClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return drive.New(hc, root), nil
+}
+
+// bootstrap creates (or finds) the app's root folder under drive.file and
+// prints its id. If BOTVAULT_DRIVE_ROOT_ID is already set it does nothing.
+func bootstrap(ctx context.Context) error {
+	if id := os.Getenv("BOTVAULT_DRIVE_ROOT_ID"); id != "" {
+		fmt.Printf("BOTVAULT_DRIVE_ROOT_ID already set (%s); nothing to do\n", id)
+		return nil
+	}
+	hc, err := driveClient(ctx)
+	if err != nil {
+		return err
+	}
+	id, seeded, err := drive.Bootstrap(ctx, hc, "")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("BOTVAULT_DRIVE_ROOT_ID=%s\n", id)
+	if seeded {
+		fmt.Println("seeded empty _acl.json (deny all); add bots with `botvault mint-token`")
+	}
+	return nil
+}
+
+func driveClient(ctx context.Context) (*http.Client, error) {
 	var ts oauth2.TokenSource
 	if rt := os.Getenv("BOTVAULT_OAUTH_REFRESH_TOKEN"); rt != "" {
 		cfg := &oauth2.Config{ClientID: os.Getenv("BOTVAULT_OAUTH_CLIENT_ID"), ClientSecret: os.Getenv("BOTVAULT_OAUTH_CLIENT_SECRET"),
@@ -79,7 +114,7 @@ func backend(ctx context.Context) (store.Backend, error) {
 		}
 		ts = creds.TokenSource
 	}
-	return drive.New(oauth2.NewClient(ctx, ts), root), nil
+	return oauth2.NewClient(ctx, ts), nil
 }
 
 // checkAddr refuses any bind address that is not loopback (spec: local only).

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Memory is an in-process Backend for tests and local dev. Not durable.
@@ -14,6 +15,13 @@ type Memory struct {
 	files map[string]mfile
 	// FailWrite, if set, is consulted before every write (fault injection).
 	FailWrite func(path string) error
+	// FailRead, if set, is consulted before every read (fault injection).
+	FailRead func(path string) error
+	// MaxRead, if > 0, makes reads of larger files fail with ErrTooLarge
+	// (mirrors the Drive backend's read cap).
+	MaxRead int
+	// Reads counts Read/ReadRev calls (for cost assertions in tests).
+	Reads atomic.Int64
 }
 
 type mfile struct {
@@ -29,11 +37,20 @@ func (m *Memory) Read(ctx context.Context, p string) ([]byte, error) {
 }
 
 func (m *Memory) ReadRev(_ context.Context, p string) ([]byte, string, error) {
+	m.Reads.Add(1)
+	if m.FailRead != nil {
+		if err := m.FailRead(clean(p)); err != nil {
+			return nil, "", err
+		}
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	f, ok := m.files[clean(p)]
 	if !ok {
 		return nil, "", ErrNotFound
+	}
+	if m.MaxRead > 0 && len(f.data) > m.MaxRead {
+		return nil, "", ErrTooLarge
 	}
 	return append([]byte(nil), f.data...), strconv.Itoa(f.rev), nil
 }
@@ -65,6 +82,13 @@ func (m *Memory) write(p string, data []byte, rev *string) error {
 		}
 	}
 	m.files[clean(p)] = mfile{append([]byte(nil), data...), f.rev + 1}
+	return nil
+}
+
+func (m *Memory) Delete(_ context.Context, p string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.files, clean(p))
 	return nil
 }
 

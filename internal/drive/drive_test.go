@@ -3,6 +3,7 @@ package drive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/radiancelux/botvault/internal/store"
 )
@@ -24,6 +26,12 @@ type fakeDrive struct {
 	mu    sync.Mutex
 	n     int
 	files map[string]*ffile
+	fail  []int // status codes returned (in order) before serving normally
+	hits  int
+	// postThenFail: this many folder-create POSTs succeed on "Drive" but the
+	// client gets a 503 (lost response).
+	postThenFail int
+	posts        int
 }
 type ffile struct {
 	id, name, mime, parent string
@@ -36,6 +44,16 @@ var qRE = regexp.MustCompile(`^'([^']+)' in parents(?: and name = '((?:[^'\\]|\\
 func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.hits++
+	if len(f.fail) > 0 {
+		code := f.fail[0]
+		f.fail = f.fail[1:]
+		if code == 429 {
+			w.Header().Set("Retry-After", "0")
+		}
+		http.Error(w, "transient", code)
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer test" {
 		http.Error(w, "noauth", 401)
 		return
@@ -83,6 +101,12 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewDecoder(r.Body).Decode(&meta)
 		id := f.add(meta.Name, meta.MimeType, meta.Parents[0], nil)
+		f.posts++
+		if f.postThenFail > 0 {
+			f.postThenFail--
+			http.Error(w, "lost", 503)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": id})
 	case strings.HasPrefix(p, "/upload/drive/v3/files"):
 		_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -104,6 +128,14 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		id := f.add(meta.Name, meta.MimeType, meta.Parents[0], data)
 		json.NewEncoder(w).Encode(map[string]string{"id": id})
+	case r.Method == "DELETE" && strings.HasPrefix(p, "/drive/v3/files/"):
+		id := strings.TrimPrefix(p, "/drive/v3/files/")
+		if f.files[id] == nil {
+			http.NotFound(w, r)
+			return
+		}
+		delete(f.files, id)
+		w.WriteHeader(204)
 	default:
 		http.Error(w, "unhandled "+r.Method+" "+p, 500)
 	}
@@ -172,6 +204,7 @@ func newFake(t *testing.T) (*fakeDrive, func() *Backend) {
 	return fd, func() *Backend {
 		b := New(&http.Client{Transport: authRT{}}, "ROOT")
 		b.Base = srv.URL
+		b.Retry = fastRetry(nil)
 		return b
 	}
 }
@@ -245,8 +278,248 @@ func TestDriveErrorSanitized(t *testing.T) {
 	defer srv.Close()
 	b := New(srv.Client(), "ROOT")
 	b.Base = srv.URL
+	b.Retry = fastRetry(nil)
 	_, err := b.Read(context.Background(), "x/y.json")
 	if err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "/drive/") || err.Error() != "drive: upstream error (HTTP 403)" {
 		t.Fatalf("leaky error: %v", err)
+	}
+}
+
+func fastRetry(slept *[]time.Duration) Retry {
+	return Retry{MaxAttempts: 4, Base: 100 * time.Millisecond, Max: time.Second,
+		Jitter: func() float64 { return 0.5 },
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			if slept != nil {
+				*slept = append(*slept, d)
+			}
+			return ctx.Err()
+		}}
+}
+
+func TestRetryTransient(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	var slept []time.Duration
+	b.Retry = fastRetry(&slept)
+	ctx := context.Background()
+	// 503,500 on a write (multipart body must be re-sent intact), then success.
+	fd.fail = []int{503, 500}
+	if err := b.Write(ctx, "a/b.json", []byte(`{"x":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := b.Read(ctx, "a/b.json"); err != nil || string(got) != `{"x":1}` {
+		t.Fatalf("body not re-sent: %q %v", got, err)
+	}
+	// Exponential with jitter 0.5: 50ms, 100ms.
+	if !reflect.DeepEqual(slept, []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}) {
+		t.Fatalf("backoff %v", slept)
+	}
+	// 429 honours Retry-After: 0.
+	slept = nil
+	fd.fail = []int{429}
+	if _, err := b.Read(ctx, "a/b.json"); err != nil || len(slept) != 1 || slept[0] != 0 {
+		t.Fatalf("429: %v %v", slept, err)
+	}
+}
+
+func TestRetryBoundedAndNonRetryable(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	b.Write(ctx, "a.json", []byte("1"))
+	fd.hits = 0
+	fd.fail = []int{500, 500, 500, 500, 500, 500}
+	if _, err := b.Read(ctx, "a.json"); err == nil || err.Error() != "drive: upstream error (HTTP 500)" {
+		t.Fatalf("want sanitized 500 after bounded retries, got %v", err)
+	}
+	if fd.hits != 4 {
+		t.Fatalf("attempts = %d, want 4", fd.hits)
+	}
+	fd.fail, fd.hits = []int{403}, 0
+	if _, err := b.Read(ctx, "a.json"); err == nil || fd.hits != 1 {
+		t.Fatalf("403 retried: hits=%d err=%v", fd.hits, err)
+	}
+}
+
+func TestRetryDelayCap(t *testing.T) {
+	r := Retry{Base: time.Second, Max: 4 * time.Second, Jitter: func() float64 { return 0.999 }}
+	if d := r.delay(10, nil); d > 4*time.Second {
+		t.Fatalf("uncapped %v", d)
+	}
+	resp := &http.Response{Header: http.Header{"Retry-After": {"3600"}}}
+	if d := r.delay(0, resp); d != 4*time.Second {
+		t.Fatalf("Retry-After not capped %v", d)
+	}
+}
+
+func TestBootstrap(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	id, seeded, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil || id == "" || !seeded {
+		t.Fatalf("bootstrap: %q %v %v", id, seeded, err)
+	}
+	if fd.files[id].parent != "root" || fd.files[id].name != RootFolderName || fd.files[id].mime != folderMime {
+		t.Fatalf("root folder %+v", fd.files[id])
+	}
+	b := New(hc, id)
+	b.Base = srv.URL
+	if got, _ := b.Read(ctx, "_acl.json"); strings.TrimSpace(string(got)) != `{"bots":{}}` {
+		t.Fatalf("acl seed %q", got)
+	}
+	b.Write(ctx, "_acl.json", []byte(`{"bots":{"x":{}}}`))
+	id2, seeded2, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil || id2 != id || seeded2 {
+		t.Fatalf("not idempotent: %q %v %v", id2, seeded2, err)
+	}
+	if got, _ := b.Read(ctx, "_acl.json"); string(got) != `{"bots":{"x":{}}}` {
+		t.Fatal("bootstrap overwrote existing ACL")
+	}
+}
+
+func (f *fakeDrive) folders(parent, name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ids []*ffile
+	for _, x := range f.files {
+		if x.parent == parent && x.name == name && x.mime == folderMime {
+			ids = append(ids, x)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i].seq < ids[j].seq })
+	out := []string{}
+	for _, x := range ids {
+		out = append(out, x.id)
+	}
+	return out
+}
+
+// R1-1: a folder POST that lands on Drive but returns 503 must not be re-POSTed.
+func TestFolderCreateLostResponseNoDuplicate(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	b.Retry = fastRetry(nil)
+	ctx := context.Background()
+	fd.postThenFail = 1
+	if err := b.Write(ctx, "p/x.json", []byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	ids := fd.folders(b.RootID, "p")
+	if len(ids) != 1 || fd.posts != 1 {
+		t.Fatalf("folders %v posts %d; want exactly one folder, one POST", ids, fd.posts)
+	}
+	// Simulated restart: a fresh backend resolves the same folder.
+	b2 := mk()
+	b2.Retry = fastRetry(nil)
+	if got, err := b2.Read(ctx, "p/x.json"); err != nil || string(got) != "1" {
+		t.Fatalf("restart read %q %v", got, err)
+	}
+	if id, _ := b2.folderID(ctx, "p", false); id != ids[0] {
+		t.Fatalf("restart adopted %s want %s", id, ids[0])
+	}
+}
+
+// R1-1: if a duplicate exists anyway, creators and restarts adopt the oldest.
+func TestFolderCreateAdoptsOldest(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	b.Retry = fastRetry(nil)
+	ctx := context.Background()
+	if _, err := b.folderID(ctx, "q", true); err != nil {
+		t.Fatal(err)
+	}
+	fd.mu.Lock()
+	fd.add("q", folderMime, b.RootID, nil) // a racing duplicate
+	fd.mu.Unlock()
+	oldest := fd.folders(b.RootID, "q")[0]
+	for i := 0; i < 2; i++ { // two restarts
+		b2 := mk()
+		b2.Retry = fastRetry(nil)
+		if id, err := b2.folderID(ctx, "q", true); err != nil || id != oldest {
+			t.Fatalf("restart %d adopted %s want %s (%v)", i, id, oldest, err)
+		}
+	}
+	if n := len(fd.folders(b.RootID, "q")); n != 2 {
+		t.Fatalf("restart created more folders: %d", n)
+	}
+}
+
+// R1-1: bootstrap's root folder with a lost create response.
+func TestBootstrapLostResponseNoDuplicate(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	fd.postThenFail = 1
+	id, _, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := fd.folders("root", RootFolderName)
+	if len(ids) != 1 || ids[0] != id {
+		t.Fatalf("root folders %v, bootstrap returned %s", ids, id)
+	}
+	id2, _, err := Bootstrap(ctx, hc, srv.URL) // restart
+	if err != nil || id2 != id || len(fd.folders("root", RootFolderName)) != 1 {
+		t.Fatalf("rerun %s %v", id2, err)
+	}
+}
+
+// R1-2: downloads past the cap error instead of truncating.
+func TestReadCapErrors(t *testing.T) {
+	_, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	old := MaxRead
+	MaxRead = 8
+	defer func() { MaxRead = old }()
+	b.Write(ctx, "big.json", []byte("0123456789"))
+	if _, err := b.Read(ctx, "big.json"); !errors.Is(err, store.ErrTooLarge) {
+		t.Fatalf("want ErrTooLarge, got %v", err)
+	}
+}
+
+// R1-5: total retry sleep stays within Budget, and the default budget plus
+// one attempt's worth of slack fits inside the server WriteTimeout (60s).
+func TestRetryBudget(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	b.Write(ctx, "a.json", []byte("1"))
+	var slept []time.Duration
+	b.Retry = Retry{MaxAttempts: 10, Base: time.Second, Max: 16 * time.Second, Budget: 30 * time.Second,
+		Jitter: func() float64 { return 0.999 },
+		Sleep:  func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }}
+	fd.fail = []int{500, 500, 500, 500, 500, 500, 500, 500, 500, 500}
+	b.Read(ctx, "a.json")
+	var total time.Duration
+	for _, d := range slept {
+		total += d
+	}
+	if total > 30*time.Second {
+		t.Fatalf("slept %v > budget", total)
+	}
+	if d := DefaultRetry(); d.Budget <= 0 || d.Budget > 45*time.Second {
+		t.Fatalf("default budget %v must be set and < 60s WriteTimeout with margin", d.Budget)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	_, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	b.Write(ctx, "p/_index.dirty", []byte("1"))
+	if err := b.Delete(ctx, "p/_index.dirty"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(ctx, "p/_index.dirty"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("still there: %v", err)
+	}
+	if err := b.Delete(ctx, "p/_index.dirty"); err != nil {
+		t.Fatalf("missing file: %v", err)
 	}
 }

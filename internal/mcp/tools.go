@@ -1,15 +1,20 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/radiancelux/botvault/internal/vault"
 )
 
 var errUnknownTool = errors.New("unknown tool")
+
+// CallTimeout bounds one tool call (below the server's 60s WriteTimeout).
+var CallTimeout = 50 * time.Second
 
 type args struct {
 	Project   string   `json:"project"`
@@ -24,6 +29,8 @@ type args struct {
 	Links     []string `json:"links"`
 	Text      string   `json:"text"`
 	IfVersion *int     `json:"if_version"`
+	Query     string   `json:"query"`
+	Limit     int      `json:"limit"`
 }
 
 func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (any, error) {
@@ -35,7 +42,10 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			return nil, fmt.Errorf("%w: %v", vault.ErrInvalid, err)
 		}
 	}
-	ctx := r.Context()
+	// Every tool call gets a deadline inside the HTTP server's 60s
+	// WriteTimeout; Drive requests and retry sleeps all honour ctx.
+	ctx, cancel := context.WithTimeout(r.Context(), CallTimeout)
+	defer cancel()
 	switch name {
 	case "list_projects":
 		return s.V.ListProjects(ctx, bot)
@@ -48,6 +58,16 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			Title: a.Title, Body: a.Body, Status: a.Status, Tags: a.Tags, Links: a.Links, IfVersion: a.IfVersion})
 	case "append":
 		return s.V.Append(ctx, bot, a.Project, a.Key, a.Text)
+	case "search":
+		return s.V.Search(ctx, bot, a.Project, a.Query, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status}, a.Limit)
+	case "history":
+		return s.V.History(ctx, bot, a.Project, a.Key)
+	case "reindex":
+		n, skipped, err := s.V.Reindex(ctx, bot, a.Project)
+		if skipped == nil {
+			skipped = []string{}
+		}
+		return map[string]any{"entries": n, "skipped": skipped}, err
 	case "delete":
 		return s.V.Delete(ctx, bot, a.Project, a.Key, a.IfVersion)
 	}
@@ -87,6 +107,12 @@ var toolDefs = []map[string]any{
 		"inputSchema": obj(with(addr, map[string]any{"kind": kindProp, "title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "project", "key", "title")},
 	{"name": "append", "description": "Append text to a record's body without a version check; stamped with your bot id and time.",
 		"inputSchema": obj(with(addr, map[string]any{"text": str}), "project", "key", "text")},
+	{"name": "search", "description": "Search the index (key, kind, title, tags, first 500 chars of body); all terms must match. project=\"*\" searches every project you can read. Archived hidden unless status=archived.",
+		"inputSchema": obj(map[string]any{"project": str, "query": str, "kind": kindProp, "tag": str, "status": str, "limit": integer}, "project", "query")},
+	{"name": "history", "description": "List every version of a key (newest first) with author and time; fetch one with get(version=N).",
+		"inputSchema": obj(addr, "project", "key")},
+	{"name": "reindex", "description": "Rebuild a project's search index from its records. Project owners only. Returns entries and any skipped (unparseable) record files.",
+		"inputSchema": obj(map[string]any{"project": str}, "project")},
 	{"name": "delete", "description": "Soft delete: marks the record archived (new version, history kept). Project owners only.",
 		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "project", "key")},
 }

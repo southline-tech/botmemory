@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path"
 	"regexp"
 	"sort"
@@ -24,6 +25,11 @@ var (
 	ErrConflict  = errors.New("version conflict")
 	ErrNotFound  = errors.New("not found")
 	ErrInvalid   = errors.New("invalid argument")
+	// ErrCorrupt marks a stored record that exists but cannot be parsed.
+	ErrCorrupt = errors.New("corrupt record")
+	// ErrMarker: the durable index-dirty marker could not be written, so the
+	// write was refused (fail closed).
+	ErrMarker = errors.New("index dirty marker unavailable")
 )
 
 // Kinds is the closed set of record kinds (spec: strict kinds).
@@ -66,7 +72,12 @@ type Vault struct {
 	b     store.Backend
 	acl   func() *acl.ACL
 	now   func() time.Time
-	locks sync.Map // record path -> *sync.Mutex
+	locks sync.Map // record path or "proj:<p>" -> *sync.Mutex
+	// dirty caches each project's index state ("dirty"/"clean"); the
+	// durable source is the projects/<p>/_index.dirty marker in storage.
+	dirty sync.Map // project -> bool (true = dirty)
+	// marks holds per-project durable-marker state (see marker.go).
+	marks sync.Map // project -> *markState
 }
 
 func New(b store.Backend, aclFn func() *acl.ACL) *Vault {
@@ -124,7 +135,7 @@ func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
 	}
 	var r Record
 	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, fmt.Errorf("corrupt record %s: %w", p, err)
+		return nil, fmt.Errorf("%w %s: %v", ErrCorrupt, p, err)
 	}
 	r.rev = rev
 	return &r, nil
@@ -140,7 +151,7 @@ func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
 // is the commit point; a concurrent writer (another process) fails it with
 // ErrPrecondition -> CONFLICT, in addition to the in-process key lock and the
 // single-instance lock file.
-func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) error {
+func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, project string) error {
 	rev := ""
 	if prev != nil {
 		rev = prev.rev
@@ -149,13 +160,51 @@ func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) 
 			return err
 		}
 	}
+	// Ensure the durable _index.dirty marker exists before the record
+	// commits, so a crash between the commit and the index save is detected
+	// at the next startup. Fails closed (see FailClosedOnMarkerError).
+	if err := v.beginWrite(ctx, project); err != nil {
+		return err
+	}
+	// R4-1: assume the index is NOT good until afterWrite reports it saved.
+	// committed means "WriteIf started and did not report ErrPrecondition". A panic after
+	// the commit marks the project dirty and keeps the marker, then re-panics.
+	committed, indexOK := false, false
+	defer func() {
+		ok := !committed || indexOK
+		if p := recover(); p != nil {
+			if committed {
+				v.dirty.Store(project, true)
+				ok = false
+			}
+			v.endWrite(ctx, project, ok)
+			panic(p)
+		}
+		v.endWrite(ctx, project, ok)
+	}()
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
+	// R5-1: from here on the record MAY be saved. On Drive an error after the
+	// upload starts (deadline mid-PATCH, lost response, final 5xx, retry
+	// budget exhausted) can follow a successful save, so only ErrPrecondition
+	// proves "not saved". Everything else (and a panic) is treated as saved:
+	// project dirty, marker kept.
+	committed = true
 	err := v.b.WriteIf(ctx, recPath(project, next.Key), b, rev)
 	if errors.Is(err, store.ErrPrecondition) {
+		committed = false
 		return fmt.Errorf("%w: %s changed in storage since it was read; re-get and retry", ErrConflict, next.Key)
 	}
-	return err
+	if err != nil {
+		v.dirty.Store(project, true)
+		return err
+	}
+	// Record is durable; index and log are derived. Don't fail the write
+	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
+	if err := v.afterWrite(ctx, op, project, next, &indexOK); err != nil {
+		log.Printf("botvault: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
+	}
+	return nil
 }
 
 func (v *Vault) ListProjects(ctx context.Context, bot string) ([]string, error) {
@@ -285,7 +334,7 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 			next.Kind = prev.Kind
 		}
 	}
-	if err := v.commit(ctx, prev, next, in.Project); err != nil {
+	if err := v.commit(ctx, "put", prev, next, in.Project); err != nil {
 		return nil, err
 	}
 	return next, nil
@@ -318,10 +367,11 @@ func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Re
 	if next.Body != "" && !strings.HasSuffix(next.Body, "\n") {
 		sep = "\n"
 	}
+	op := "append"
 	next.Body += sep + fmt.Sprintf("\n— %s, %s\n%s\n", bot, now.Format(time.RFC3339), text)
 	next.Version++
 	next.UpdatedBy, next.UpdatedAt = bot, now
-	if err := v.commit(ctx, prev, &next, project); err != nil {
+	if err := v.commit(ctx, op, prev, &next, project); err != nil {
 		return nil, err
 	}
 	return &next, nil
@@ -352,7 +402,7 @@ func (v *Vault) Delete(ctx context.Context, bot, project, key string, ifVersion 
 	next.Status = StatusArchived
 	next.Version++
 	next.UpdatedBy, next.UpdatedAt = bot, v.now()
-	if err := v.commit(ctx, prev, &next, project); err != nil {
+	if err := v.commit(ctx, "delete", prev, &next, project); err != nil {
 		return nil, err
 	}
 	return &next, nil
