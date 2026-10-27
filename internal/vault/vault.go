@@ -281,6 +281,9 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 	}
 	if prev != nil {
 		next.CreatedBy, next.CreatedAt = prev.CreatedBy, prev.CreatedAt
+		if next.Kind == "" { // omitted kind keeps the previous kind
+			next.Kind = prev.Kind
+		}
 	}
 	if err := v.commit(ctx, prev, next, in.Project); err != nil {
 		return nil, err

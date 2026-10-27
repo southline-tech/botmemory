@@ -277,3 +277,18 @@ func TestCommitFailureThenRetry(t *testing.T) {
 		t.Fatalf("history wrong: %+v", old)
 	}
 }
+
+func TestUpdateWithoutKindKeepsKind(t *testing.T) {
+	v, _ := newVault(t)
+	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Kind: "decision", Key: "k", Title: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "k", Title: "t2", IfVersion: iv(1)})
+	if err != nil || r.Kind != "decision" {
+		t.Fatalf("kind lost: %+v %v", r, err)
+	}
+	r, _ = v.Put(ctx, "pm", PutInput{Project: "vc", Kind: "note", Key: "k", Title: "t3", IfVersion: iv(2)})
+	if r.Kind != "note" {
+		t.Fatal("explicit kind change ignored")
+	}
+}

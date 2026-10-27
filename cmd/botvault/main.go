@@ -6,13 +6,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -86,9 +88,6 @@ func checkAddr(addr string) error {
 	if err != nil {
 		return fmt.Errorf("BOTVAULT_ADDR %q: %w", addr, err)
 	}
-	if host == "localhost" {
-		return nil
-	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
 		return fmt.Errorf("BOTVAULT_ADDR %q: refusing non-loopback bind (use 127.0.0.1)", addr)
@@ -96,14 +95,28 @@ func checkAddr(addr string) error {
 	return nil
 }
 
-func lockPath() string {
+// normalizeAddr binds the literal "localhost" as 127.0.0.1 (never resolved).
+func normalizeAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err == nil && strings.EqualFold(host, "localhost") {
+		return net.JoinHostPort("127.0.0.1", port)
+	}
+	return addr
+}
+
+// lockPath is fixed per vault, not per environment: every instance serving
+// the same Drive root (or memory) contends on the same file regardless of
+// TMPDIR/XDG_RUNTIME_DIR. BOTVAULT_LOCK_FILE overrides.
+// The guard holds for one host only; it cannot see a server on another host.
+func lockPath(rootID string) string {
 	if p := os.Getenv("BOTVAULT_LOCK_FILE"); p != "" {
 		return p
 	}
-	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return filepath.Join(d, "botvault.lock")
+	if rootID == "" {
+		rootID = "memory"
 	}
-	return filepath.Join(os.TempDir(), "botvault.lock")
+	sum := sha256.Sum256([]byte(rootID))
+	return "/var/tmp/botvault-" + hex.EncodeToString(sum[:])[:12] + ".lock"
 }
 
 func serve() error {
@@ -112,10 +125,17 @@ func serve() error {
 	if addr == "" {
 		addr = "127.0.0.1:8787"
 	}
+	addr = normalizeAddr(addr)
 	if err := checkAddr(addr); err != nil {
 		return err
 	}
-	lk, err := instance.Acquire(lockPath())
+	root := os.Getenv("BOTVAULT_DRIVE_ROOT_ID")
+	if os.Getenv("BOTVAULT_BACKEND") == "memory" {
+		root = ""
+	}
+	lp := lockPath(root)
+	log.Printf("botvault single-instance lock: %s", lp)
+	lk, err := instance.Acquire(lp)
 	if err != nil {
 		return err
 	}

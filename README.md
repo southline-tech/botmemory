@@ -22,8 +22,13 @@ for p in acl store vault mcp drive; do go test -count=1 -race ./internal/$p/; do
 
 ### Safety notes
 - Binds loopback only (`BOTVAULT_ADDR` must be 127.0.0.1/::1/localhost); Origin must be loopback if sent; `Authorization: Bearer` required.
-- Single instance: exclusive flock on `BOTVAULT_LOCK_FILE`. Record writes are also conditional on the storage revision (Drive file `version`), so a stale write from anywhere fails with `CONFLICT`.
+- Single instance: exclusive flock on a lock file fixed per vault, `/var/tmp/botvault-<sha256(BOTVAULT_DRIVE_ROOT_ID)[:12]>.lock` (override with `BOTVAULT_LOCK_FILE`; path logged at startup). Record writes are also conditional on the Drive file `version`, but Drive has no atomic compare-and-swap, so **the concurrency guard only holds for one server process on one host**. Never run two servers against the same Drive root from different hosts (or with different lock-file overrides).
+- `BOTVAULT_ADDR=localhost:…` is bound as 127.0.0.1 (never resolved).
+- Updates that omit `kind` keep the previous kind.
 - Save order: history/vN (idempotent copy of immutable vN) then the record (commit point). A failure between leaves the record at vN and a retry is safe.
-- ACL reloads every 60s; after 5 consecutive failures it fails closed (denies all) and logs loudly. Duplicate token hashes and invalid bot ids are rejected.
+- ACL reloads every 60s; after 5 consecutive failures it fails closed (denies all) and logs loudly. **Caveat:** while `_acl.json` is broken or unreadable the last good ACL stays in force for up to ~5 minutes (5 × 60s), so a token revoked in that window keeps working until fail-closed kicks in. Revoke by editing a valid `_acl.json`. Duplicate token hashes and invalid bot ids are rejected.
 - Drive error details are logged server-side only; bots see `drive: upstream error (HTTP n)`.
 - `append` to a missing key returns `NOT_FOUND` (create it with `put` first).
+
+### Data migration note
+No real Drive data exists in any earlier layout (e.g. kind-scoped `records/<kind>/<key>.json`): no real Drive credential has ever been configured for botVault, so all testing has used the fake Drive and memory backends. No migration is needed.
