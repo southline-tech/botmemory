@@ -535,3 +535,82 @@ func TestMarkerFixedOrder(t *testing.T) {
 	}
 	step("rebuilt, nothing in flight", false)
 }
+
+// saveThenFail saves records, then reports an error or panics, the way a
+// Drive PATCH can succeed while its response is lost or the deadline fires.
+type saveThenFail struct {
+	*store.Memory
+	panicAfter bool
+}
+
+func (s *saveThenFail) WriteIf(ctx context.Context, p string, data []byte, rev string) error {
+	if err := s.Memory.WriteIf(ctx, p, data, rev); err != nil {
+		return err
+	}
+	if strings.Contains(p, "/records/") {
+		if s.panicAfter {
+			panic("lost after save")
+		}
+		return errors.New("context deadline exceeded (after save)")
+	}
+	return nil
+}
+
+// R5-1: a WriteIf error (or panic) after the record was saved must keep the
+// marker; a restart must see the project dirty and rebuild to the new version.
+func TestWriteIfErrorAfterSaveKeepsMarker(t *testing.T) {
+	for _, panics := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%v", panics), func(t *testing.T) {
+			v0, m := newVault(t)
+			if _, err := put(v0, "pm", nil, "one"); err != nil {
+				t.Fatal(err)
+			}
+			v := New(&saveThenFail{Memory: m, panicAfter: panics}, v0.acl)
+			func() {
+				defer func() {
+					if p := recover(); (p != nil) != panics {
+						t.Fatalf("panic=%v, want %v", p, panics)
+					}
+				}()
+				if _, err := put(v, "pm", iv(1), "two"); err == nil {
+					t.Fatal("want error from WriteIf")
+				}
+			}()
+			if _, err := m.Read(ctx, dirtyPath("vc")); err != nil {
+				t.Fatalf("marker removed: %v", err)
+			}
+			if !v.isDirty(ctx, "vc") {
+				t.Fatal("not dirty in-process")
+			}
+			v2 := New(m, v0.acl)
+			if !v2.isDirty(ctx, "vc") {
+				t.Fatal("restart not dirty")
+			}
+			idx, _, err := v2.loadIndex(ctx, "vc", false)
+			if err != nil || idx.Entries["k1"].Version != 2 {
+				t.Fatalf("after restart: want k1 v2, got %+v err %v", idx.Entries["k1"], err)
+			}
+			if _, err := m.Read(ctx, dirtyPath("vc")); err == nil {
+				t.Fatal("marker not removed after rebuild")
+			}
+		})
+	}
+}
+
+// R5-1 converse: a CONFLICT (ErrPrecondition) proves nothing was saved, so it
+// does not dirty the project.
+func TestConflictDoesNotDirty(t *testing.T) {
+	v, m := newVault(t)
+	if _, err := put(v, "pm", nil, "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := put(v, "pm", nil, "again"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("want conflict, got %v", err)
+	}
+	if v.isDirty(ctx, "vc") {
+		t.Fatal("conflict dirtied the project")
+	}
+	if _, err := m.Read(ctx, dirtyPath("vc")); err == nil {
+		t.Fatal("marker left after conflict")
+	}
+}

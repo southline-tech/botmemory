@@ -167,7 +167,7 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 		return err
 	}
 	// R4-1: assume the index is NOT good until afterWrite reports it saved.
-	// If the record never committed, the index is unaffected. A panic after
+	// committed means "WriteIf started and did not report ErrPrecondition". A panic after
 	// the commit marks the project dirty and keeps the marker, then re-panics.
 	committed, indexOK := false, false
 	defer func() {
@@ -184,14 +184,21 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	}()
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
+	// R5-1: from here on the record MAY be saved. On Drive an error after the
+	// upload starts (deadline mid-PATCH, lost response, final 5xx, retry
+	// budget exhausted) can follow a successful save, so only ErrPrecondition
+	// proves "not saved". Everything else (and a panic) is treated as saved:
+	// project dirty, marker kept.
+	committed = true
 	err := v.b.WriteIf(ctx, recPath(project, next.Key), b, rev)
 	if errors.Is(err, store.ErrPrecondition) {
+		committed = false
 		return fmt.Errorf("%w: %s changed in storage since it was read; re-get and retry", ErrConflict, next.Key)
 	}
 	if err != nil {
+		v.dirty.Store(project, true)
 		return err
 	}
-	committed = true
 	// Record is durable; index and log are derived. Don't fail the write
 	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
 	if err := v.afterWrite(ctx, op, project, next, &indexOK); err != nil {
