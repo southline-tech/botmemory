@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/radiancelux/botvault/internal/store"
 )
 
 func TestIndexAndLogMaintained(t *testing.T) {
@@ -129,5 +131,107 @@ func TestHistoryAndGetByVersion(t *testing.T) {
 	}
 	if _, err := v.History(ctx, "nobody", "vc", "k1"); err == nil {
 		t.Fatal("unauthorized history")
+	}
+}
+
+// R1-3: a failed derived update marks the index dirty; the next access
+// rebuilds it, so an archived record never shows as active.
+func TestStaleIndexRebuiltAfterDerivedFailure(t *testing.T) {
+	v, m := newVault(t)
+	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "a", Title: "alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	m.FailWrite = func(p string) error {
+		if strings.HasSuffix(p, "_index.json") {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	if _, err := v.Delete(ctx, "pm", "vc", "a", iv(1)); err != nil {
+		t.Fatal(err)
+	}
+	m.FailWrite = nil
+	hits, err := v.Search(ctx, "pm", "vc", "alpha", ListFilter{}, 0)
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("archived record surfaced as active: %+v %v", hits, err)
+	}
+	hits, _ = v.Search(ctx, "pm", "vc", "alpha", ListFilter{Status: StatusArchived}, 0)
+	if len(hits) != 1 || hits[0].Version != 2 {
+		t.Fatalf("archived search %+v", hits)
+	}
+	// The rebuilt index was persisted and the dirty mark cleared.
+	data, _ := m.Read(ctx, indexPath("vc"))
+	var idx Index
+	json.Unmarshal(data, &idx)
+	if idx.Entries["a"].Status != StatusArchived {
+		t.Fatalf("index not saved: %+v", idx.Entries["a"])
+	}
+	if _, d := v.dirty.Load("vc"); d {
+		t.Fatal("still dirty")
+	}
+}
+
+// R1-4: search saves a rebuilt index, and one corrupt record does not break
+// "*" search or later index updates.
+func TestSearchSavesRebuildAndSkipsCorrupt(t *testing.T) {
+	v, m := newVault(t)
+	v.Put(ctx, "grok", PutInput{Project: "vc", Key: "a", Title: "alpha"})
+	v.Put(ctx, "grok", PutInput{Project: "other", Key: "b", Title: "alpha two"})
+	m.Write(ctx, recPath("vc", "bad"), []byte("{not json"))
+	m.Write(ctx, indexPath("vc"), []byte("garbage"))
+	hits, err := v.Search(ctx, "grok", "*", "alpha", ListFilter{}, 0)
+	if err != nil || len(hits) != 2 {
+		t.Fatalf("* search: %+v %v", hits, err)
+	}
+	data, _ := m.Read(ctx, indexPath("vc"))
+	var idx Index
+	if json.Unmarshal(data, &idx) != nil || len(idx.Entries) != 1 {
+		t.Fatalf("rebuilt index not saved: %q", data)
+	}
+	m.Write(ctx, indexPath("vc"), []byte("garbage"))
+	if _, err := v.Put(ctx, "grok", PutInput{Project: "vc", Key: "c", Title: "gamma"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = m.Read(ctx, indexPath("vc"))
+	idx = Index{}
+	json.Unmarshal(data, &idx)
+	if _, ok := idx.Entries["c"]; !ok || len(idx.Entries) != 2 {
+		t.Fatalf("index update with corrupt record: %+v", idx.Entries)
+	}
+}
+
+// R1-2: log.jsonl rotates into log-NNNN.jsonl before growing past the
+// segment size, and a log over the backend read cap errors (no truncation).
+func TestLogRotationAndCap(t *testing.T) {
+	v, m := newVault(t)
+	old := LogSegmentMax
+	LogSegmentMax = 300
+	defer func() { LogSegmentMax = old }()
+	for i := 0; i < 6; i++ {
+		if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "k" + string(rune('a'+i)), Title: "t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, _ := m.List(ctx, "projects/vc")
+	segs, total := 0, 0
+	for _, n := range names {
+		if strings.HasPrefix(n, "log") {
+			b, _ := m.Read(ctx, "projects/vc/"+n)
+			if len(b) > LogSegmentMax {
+				t.Fatalf("%s is %d bytes", n, len(b))
+			}
+			total += bytes.Count(b, []byte("\n"))
+			if n != "log.jsonl" {
+				segs++
+			}
+		}
+	}
+	if segs < 1 || total != 6 {
+		t.Fatalf("segments %d lines %d (%v)", segs, total, names)
+	}
+	// Over the read cap: appendLog errors; the record write still succeeds.
+	m.MaxRead = 10
+	if err := v.appendLog(ctx, "vc", []byte("x\n")); !errors.Is(err, store.ErrTooLarge) {
+		t.Fatalf("want ErrTooLarge, got %v", err)
 	}
 }

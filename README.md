@@ -35,6 +35,19 @@ No real Drive data exists in any earlier layout (e.g. kind-scoped `records/<kind
 
 ## M2
 - Tools: `search` (all terms, case-insensitive, over key/kind/title/tags/first 500 chars; `project:"*"` = every readable project; archived hidden unless `status:"archived"`; limit default 50, max 200), `history` (versions newest first; fetch one with `get` + `version`), `reindex` (owner).
-- Derived files per project: `_index.json` (per-key summary; rebuilt automatically if missing/corrupt) and `log.jsonl` (one line per put/append/delete). They are updated after the record commits; a failure there is logged, never fails the write, and `reindex` repairs the index.
-- Drive retries 429/5xx/transport errors: 5 attempts, exponential backoff (500ms base, 16s cap) with full jitter, honours `Retry-After`.
+- Derived files per project: `_index.json` (per-key summary) and `log.jsonl` (one line per put/append/delete). They are updated after the record commits; a failure there is logged and never fails the write. If the index update fails the project is marked dirty and the next index access (search or write) rebuilds it from records and saves it; a missing or corrupt index is likewise rebuilt and saved. Unreadable records are skipped (and logged) during a rebuild, and one bad project never fails a `project:"*"` search. `reindex` forces a rebuild.
+- `log.jsonl` rotates into `log-0001.jsonl`, `log-0002.jsonl`, … before it would pass 8 MiB. No Drive read is ever silently truncated: a file over the 32 MiB read cap is an error.
+- Drive retries 429/5xx/transport errors: 5 attempts, exponential backoff (500ms base, 16s cap) with full jitter, honours `Retry-After`, with a 30s total sleep budget per request so calls finish inside the 60s HTTP WriteTimeout.
+- Folder creates are never blindly re-POSTed: each attempt is a single POST, the folder is looked up again before any retry and after every create, and the oldest copy is adopted. So a lost create response cannot leave a duplicate folder, and any duplicate resolves the same way after a restart. This also covers bootstrap's root folder.
 - `botvault bootstrap`: with `BOTVAULT_DRIVE_ROOT_ID` unset, finds or creates `botVault` in My Drive (drive.file), seeds a deny-all `_acl.json`, and prints `BOTVAULT_DRIVE_ROOT_ID=<id>`. Idempotent.
+
+### Real-Drive smoke test
+`scripts/smoke_drive.py` runs every tool against a live server and prints PASS/FAIL per check. It reads only env vars and never prints the token:
+
+```sh
+botvault mint-token smoke-bot         # add the hash to _acl.json as owner of a throwaway project
+BOTVAULT_DRIVE_ROOT_ID=... botvault serve &   # OAuth env vars as for serve
+BOTVAULT_SMOKE_TOKEN=... BOTVAULT_SMOKE_PROJECT=smoke-tmp scripts/smoke_drive.py
+# BOTVAULT_SMOKE_M1=1 limits it to the M1 tools; BOTVAULT_URL overrides the endpoint.
+```
+Afterwards delete the project's folder in Drive, remove the bot from `_acl.json`, and discard the token.

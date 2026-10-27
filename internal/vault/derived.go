@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path"
 	"sort"
 	"strconv"
@@ -61,6 +62,14 @@ type SearchHit struct {
 
 func indexPath(p string) string { return path.Join("projects", p, "_index.json") }
 func logPath(p string) string   { return path.Join("projects", p, "log.jsonl") }
+func logSegPath(p string, n int) string {
+	return path.Join("projects", p, fmt.Sprintf("log-%04d.jsonl", n))
+}
+
+// LogSegmentMax is the size at which log.jsonl is rotated: its contents move
+// to the next log-NNNN.jsonl and log.jsonl starts empty. Kept well under the
+// Drive backend's 32 MiB read cap so the live log is always fully readable.
+var LogSegmentMax = 8 << 20
 
 func entryOf(r *Record) IndexEntry {
 	sum := r.Body
@@ -74,41 +83,108 @@ func entryOf(r *Record) IndexEntry {
 // afterWrite updates the index and appends to the log under the project lock.
 // Drive has no append, so log.jsonl is read-modify-write; single instance +
 // project lock keep it append-only in effect.
+// If the index update fails the project is marked dirty, so the next index
+// access rebuilds from records rather than serving the stale entry.
 func (v *Vault) afterWrite(ctx context.Context, op, project string, r *Record) error {
 	defer v.lock("proj:" + project)()
-	idx, err := v.loadIndex(ctx, project, false)
-	if err != nil {
-		return fmt.Errorf("index: %w", err)
-	}
-	idx.Entries[r.Key] = entryOf(r)
-	if err := v.saveIndex(ctx, project, idx); err != nil {
+	if err := v.updateIndex(ctx, project, r); err != nil {
+		v.dirty.Store(project, struct{}{})
 		return fmt.Errorf("index: %w", err)
 	}
 	line, _ := json.Marshal(LogEntry{TS: r.UpdatedAt, Bot: r.UpdatedBy, Op: op, Key: r.Key, Kind: r.Kind, Version: r.Version})
-	old, err := v.b.Read(ctx, logPath(project))
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("log: %w", err)
-	}
-	if err := v.b.Write(ctx, logPath(project), append(old, append(line, '\n')...)); err != nil {
+	if err := v.appendLog(ctx, project, append(line, '\n')); err != nil {
 		return fmt.Errorf("log: %w", err)
 	}
 	return nil
 }
 
-// loadIndex reads the index, rebuilding from records when missing or corrupt
-// (or when rebuild is forced). Caller must hold the project lock.
-func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (*Index, error) {
-	if !rebuild {
+func (v *Vault) updateIndex(ctx context.Context, project string, r *Record) error {
+	idx, rebuilt, err := v.loadIndex(ctx, project, false)
+	if err != nil {
+		return err
+	}
+	if !rebuilt { // a rebuild already reflects r (records are the source of truth)
+		idx.Entries[r.Key] = entryOf(r)
+		if err := v.saveIndex(ctx, project, idx); err != nil {
+			return err
+		}
+	}
+	v.dirty.Delete(project)
+	return nil
+}
+
+// appendLog appends to log.jsonl, rotating it into log-NNNN.jsonl first when
+// the append would pass LogSegmentMax. A log the backend refuses to read in
+// full (store.ErrTooLarge) is an error, never silently truncated.
+// Crash between the segment write and the reset can duplicate lines across
+// the segment and log.jsonl; nothing is lost.
+func (v *Vault) appendLog(ctx context.Context, project string, line []byte) error {
+	old, err := v.b.Read(ctx, logPath(project))
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if len(old) > 0 && len(old)+len(line) > LogSegmentMax {
+		n, err := v.nextLogSeg(ctx, project)
+		if err != nil {
+			return err
+		}
+		if err := v.b.Write(ctx, logSegPath(project, n), old); err != nil {
+			return err
+		}
+		old = nil
+	}
+	return v.b.Write(ctx, logPath(project), append(old, line...))
+}
+
+func (v *Vault) nextLogSeg(ctx context.Context, project string) (int, error) {
+	names, err := v.b.List(ctx, path.Join("projects", project))
+	if err != nil {
+		return 0, err
+	}
+	max := 0
+	for _, n := range names {
+		var k int
+		if _, err := fmt.Sscanf(n, "log-%04d.jsonl", &k); err == nil && k > max {
+			max = k
+		}
+	}
+	return max + 1, nil
+}
+
+// loadIndex reads the index, rebuilding from records when it is missing,
+// corrupt, marked dirty, or rebuild is forced. A rebuilt index is saved
+// (best effort; on failure the project stays dirty and is rebuilt again next
+// time). rebuilt reports whether it came from records. Caller must hold the
+// project lock.
+func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (idx *Index, rebuilt bool, err error) {
+	if _, dirty := v.dirty.Load(project); !rebuild && !dirty {
 		data, err := v.b.Read(ctx, indexPath(project))
 		if err == nil {
 			var idx Index
 			if json.Unmarshal(data, &idx) == nil && idx.Entries != nil {
-				return &idx, nil
+				return &idx, false, nil
 			}
+			log.Printf("botvault: %s: corrupt index; rebuilding from records", project)
 		} else if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
+			return nil, false, err
 		}
 	}
+	idx, err = v.rebuildIndex(ctx, project)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := v.saveIndex(ctx, project, idx); err != nil {
+		v.dirty.Store(project, struct{}{})
+		log.Printf("botvault: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
+	} else {
+		v.dirty.Delete(project)
+	}
+	return idx, true, nil
+}
+
+// rebuildIndex builds an index from records, skipping (and logging) any
+// record that cannot be read or parsed so one bad file cannot break search.
+func (v *Vault) rebuildIndex(ctx context.Context, project string) (*Index, error) {
 	idx := &Index{Entries: map[string]IndexEntry{}}
 	dir := path.Join("projects", project, "records")
 	names, err := v.b.List(ctx, dir)
@@ -121,7 +197,8 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (*I
 		}
 		r, err := v.load(ctx, path.Join(dir, n))
 		if err != nil {
-			return nil, err
+			log.Printf("botvault: %s: skipping record %s in index rebuild: %v", project, n, err)
+			continue
 		}
 		idx.Entries[r.Key] = entryOf(r)
 	}
@@ -142,11 +219,16 @@ func (v *Vault) Reindex(ctx context.Context, bot, project string) (int, error) {
 		return 0, err
 	}
 	defer v.lock("proj:" + project)()
-	idx, err := v.loadIndex(ctx, project, true)
+	idx, err := v.rebuildIndex(ctx, project)
 	if err != nil {
 		return 0, err
 	}
-	return len(idx.Entries), v.saveIndex(ctx, project, idx)
+	if err := v.saveIndex(ctx, project, idx); err != nil {
+		v.dirty.Store(project, struct{}{})
+		return 0, err
+	}
+	v.dirty.Delete(project)
+	return len(idx.Entries), nil
 }
 
 // History lists every version of a key, newest first.
@@ -217,10 +299,15 @@ func (v *Vault) Search(ctx context.Context, bot, project, query string, f ListFi
 	hits := []SearchHit{}
 	for _, p := range projects {
 		unlock := v.lock("proj:" + p)
-		idx, err := v.loadIndex(ctx, p, false)
+		idx, _, err := v.loadIndex(ctx, p, false)
 		unlock()
 		if err != nil {
-			return nil, err
+			if project != "*" {
+				return nil, err
+			}
+			// One unreadable project must not fail a cross-project search.
+			log.Printf("botvault: search: skipping project %s: %v", p, err)
+			continue
 		}
 		for _, e := range idx.Entries {
 			if f.Status == "" && e.Status == StatusArchived || f.Status != "" && e.Status != f.Status ||

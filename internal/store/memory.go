@@ -14,6 +14,9 @@ type Memory struct {
 	files map[string]mfile
 	// FailWrite, if set, is consulted before every write (fault injection).
 	FailWrite func(path string) error
+	// MaxRead, if > 0, makes reads of larger files fail with ErrTooLarge
+	// (mirrors the Drive backend's read cap).
+	MaxRead int
 }
 
 type mfile struct {
@@ -34,6 +37,9 @@ func (m *Memory) ReadRev(_ context.Context, p string) ([]byte, string, error) {
 	f, ok := m.files[clean(p)]
 	if !ok {
 		return nil, "", ErrNotFound
+	}
+	if m.MaxRead > 0 && len(f.data) > m.MaxRead {
+		return nil, "", ErrTooLarge
 	}
 	return append([]byte(nil), f.data...), strconv.Itoa(f.rev), nil
 }

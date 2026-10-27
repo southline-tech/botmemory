@@ -3,6 +3,7 @@ package drive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -27,6 +28,10 @@ type fakeDrive struct {
 	files map[string]*ffile
 	fail  []int // status codes returned (in order) before serving normally
 	hits  int
+	// postThenFail: this many folder-create POSTs succeed on "Drive" but the
+	// client gets a 503 (lost response).
+	postThenFail int
+	posts        int
 }
 type ffile struct {
 	id, name, mime, parent string
@@ -96,6 +101,12 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewDecoder(r.Body).Decode(&meta)
 		id := f.add(meta.Name, meta.MimeType, meta.Parents[0], nil)
+		f.posts++
+		if f.postThenFail > 0 {
+			f.postThenFail--
+			http.Error(w, "lost", 503)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": id})
 	case strings.HasPrefix(p, "/upload/drive/v3/files"):
 		_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -358,5 +369,133 @@ func TestBootstrap(t *testing.T) {
 	}
 	if got, _ := b.Read(ctx, "_acl.json"); string(got) != `{"bots":{"x":{}}}` {
 		t.Fatal("bootstrap overwrote existing ACL")
+	}
+}
+
+func (f *fakeDrive) folders(parent, name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ids []*ffile
+	for _, x := range f.files {
+		if x.parent == parent && x.name == name && x.mime == folderMime {
+			ids = append(ids, x)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i].seq < ids[j].seq })
+	out := []string{}
+	for _, x := range ids {
+		out = append(out, x.id)
+	}
+	return out
+}
+
+// R1-1: a folder POST that lands on Drive but returns 503 must not be re-POSTed.
+func TestFolderCreateLostResponseNoDuplicate(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	b.Retry = fastRetry(nil)
+	ctx := context.Background()
+	fd.postThenFail = 1
+	if err := b.Write(ctx, "p/x.json", []byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	ids := fd.folders(b.RootID, "p")
+	if len(ids) != 1 || fd.posts != 1 {
+		t.Fatalf("folders %v posts %d; want exactly one folder, one POST", ids, fd.posts)
+	}
+	// Simulated restart: a fresh backend resolves the same folder.
+	b2 := mk()
+	b2.Retry = fastRetry(nil)
+	if got, err := b2.Read(ctx, "p/x.json"); err != nil || string(got) != "1" {
+		t.Fatalf("restart read %q %v", got, err)
+	}
+	if id, _ := b2.folderID(ctx, "p", false); id != ids[0] {
+		t.Fatalf("restart adopted %s want %s", id, ids[0])
+	}
+}
+
+// R1-1: if a duplicate exists anyway, creators and restarts adopt the oldest.
+func TestFolderCreateAdoptsOldest(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	b.Retry = fastRetry(nil)
+	ctx := context.Background()
+	if _, err := b.folderID(ctx, "q", true); err != nil {
+		t.Fatal(err)
+	}
+	fd.mu.Lock()
+	fd.add("q", folderMime, b.RootID, nil) // a racing duplicate
+	fd.mu.Unlock()
+	oldest := fd.folders(b.RootID, "q")[0]
+	for i := 0; i < 2; i++ { // two restarts
+		b2 := mk()
+		b2.Retry = fastRetry(nil)
+		if id, err := b2.folderID(ctx, "q", true); err != nil || id != oldest {
+			t.Fatalf("restart %d adopted %s want %s (%v)", i, id, oldest, err)
+		}
+	}
+	if n := len(fd.folders(b.RootID, "q")); n != 2 {
+		t.Fatalf("restart created more folders: %d", n)
+	}
+}
+
+// R1-1: bootstrap's root folder with a lost create response.
+func TestBootstrapLostResponseNoDuplicate(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	fd.postThenFail = 1
+	id, _, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := fd.folders("root", RootFolderName)
+	if len(ids) != 1 || ids[0] != id {
+		t.Fatalf("root folders %v, bootstrap returned %s", ids, id)
+	}
+	id2, _, err := Bootstrap(ctx, hc, srv.URL) // restart
+	if err != nil || id2 != id || len(fd.folders("root", RootFolderName)) != 1 {
+		t.Fatalf("rerun %s %v", id2, err)
+	}
+}
+
+// R1-2: downloads past the cap error instead of truncating.
+func TestReadCapErrors(t *testing.T) {
+	_, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	old := MaxRead
+	MaxRead = 8
+	defer func() { MaxRead = old }()
+	b.Write(ctx, "big.json", []byte("0123456789"))
+	if _, err := b.Read(ctx, "big.json"); !errors.Is(err, store.ErrTooLarge) {
+		t.Fatalf("want ErrTooLarge, got %v", err)
+	}
+}
+
+// R1-5: total retry sleep stays within Budget, and the default budget plus
+// one attempt's worth of slack fits inside the server WriteTimeout (60s).
+func TestRetryBudget(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	b.Write(ctx, "a.json", []byte("1"))
+	var slept []time.Duration
+	b.Retry = Retry{MaxAttempts: 10, Base: time.Second, Max: 16 * time.Second, Budget: 30 * time.Second,
+		Jitter: func() float64 { return 0.999 },
+		Sleep:  func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }}
+	fd.fail = []int{500, 500, 500, 500, 500, 500, 500, 500, 500, 500}
+	b.Read(ctx, "a.json")
+	var total time.Duration
+	for _, d := range slept {
+		total += d
+	}
+	if total > 30*time.Second {
+		t.Fatalf("slept %v > budget", total)
+	}
+	if d := DefaultRetry(); d.Budget <= 0 || d.Budget > 45*time.Second {
+		t.Fatalf("default budget %v must be set and < 60s WriteTimeout with margin", d.Budget)
 	}
 }

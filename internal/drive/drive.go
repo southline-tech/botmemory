@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/radiancelux/botvault/internal/store"
 )
@@ -50,20 +52,25 @@ type file struct {
 
 func q(s string) string { return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) }
 
-func (d *Backend) do(req *http.Request, out any) error {
-	resp, err := d.send(req)
+func (d *Backend) do(req *http.Request, out any) error { return d.doWith(req, out, d.Retry) }
+
+func (d *Backend) doWith(req *http.Request, out any, r Retry) error {
+	resp, err := d.sendWith(req, r)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	body, rerr := readCapped(resp.Body)
 	if resp.StatusCode == http.StatusNotFound {
 		return store.ErrNotFound
 	}
 	if resp.StatusCode/100 != 2 {
 		// Full detail goes to the server log only; bots get a generic error.
 		log.Printf("drive: %s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, bytes.TrimSpace(body))
-		return fmt.Errorf("drive: upstream error (HTTP %d)", resp.StatusCode)
+		return &upstreamErr{resp.StatusCode}
+	}
+	if rerr != nil {
+		return rerr
 	}
 	if out != nil {
 		return json.Unmarshal(body, out)
@@ -144,11 +151,7 @@ func (d *Backend) folderIDLocked(ctx context.Context, dir string, create bool) (
 	}
 	f, err := d.child(ctx, parent, name, true)
 	if err == store.ErrNotFound && create {
-		meta, _ := json.Marshal(map[string]any{"name": name, "mimeType": folderMime, "parents": []string{parent}})
-		req, _ := http.NewRequestWithContext(ctx, "POST", d.Base+"/drive/v3/files?supportsAllDrives=true&fields=id", bytes.NewReader(meta))
-		req.Header.Set("Content-Type", "application/json")
-		f = &file{}
-		err = d.do(req, f)
+		f, err = d.createFolder(ctx, parent, name)
 	}
 	if err != nil {
 		return "", err
@@ -158,6 +161,75 @@ func (d *Backend) folderIDLocked(ctx context.Context, dir string, create bool) (
 	d.mu.Unlock()
 	return f.ID, nil
 }
+
+// createFolder creates parent/name without ever blindly re-POSTing: each
+// attempt is a single POST (no transport retry), and before every retry and
+// after every create it re-queries the parent, adopting the oldest folder of
+// that name. So a POST that succeeded on Drive but failed on the wire (e.g.
+// 503 or a dropped connection) is found and adopted instead of duplicated, and
+// if a duplicate does exist every caller (and every restart) picks the same,
+// oldest one. Caller holds createMu.
+func (d *Backend) createFolder(ctx context.Context, parent, name string) (*file, error) {
+	r := d.Retry
+	if r.MaxAttempts <= 0 {
+		r = DefaultRetry()
+	}
+	var slept time.Duration
+	var lastErr error
+	for n := 0; n < r.MaxAttempts; n++ {
+		if n > 0 {
+			wait := r.delay(n-1, nil)
+			if r.Budget > 0 && slept+wait > r.Budget {
+				break
+			}
+			slept += wait
+			if err := r.Sleep(ctx, wait); err != nil {
+				return nil, err
+			}
+			// Look again before re-POSTing: the previous POST may have landed.
+			f, err := d.child(ctx, parent, name, true)
+			if err == nil {
+				return f, nil
+			}
+			if err != store.ErrNotFound {
+				lastErr = err
+				continue
+			}
+		}
+		meta, _ := json.Marshal(map[string]any{"name": name, "mimeType": folderMime, "parents": []string{parent}})
+		req, _ := http.NewRequestWithContext(ctx, "POST", d.Base+"/drive/v3/files?supportsAllDrives=true&fields=id", bytes.NewReader(meta))
+		req.Header.Set("Content-Type", "application/json")
+		created := &file{}
+		lastErr = d.doWith(req, created, Retry{MaxAttempts: 1}) // never auto-retry a create
+		// Re-query after the create so a concurrent/duplicate create resolves
+		// to the oldest copy, the same one a restarted process would pick.
+		f, err := d.child(ctx, parent, name, true)
+		if err == nil {
+			return f, nil
+		}
+		if lastErr == nil {
+			// Created but not yet visible to the query: use what we made.
+			return created, nil
+		}
+		if !transient(lastErr) {
+			return nil, lastErr
+		}
+	}
+	return nil, lastErr
+}
+
+// transient reports whether a do() error is worth retrying.
+func transient(err error) bool {
+	var ue *upstreamErr
+	if errors.As(err, &ue) {
+		return retryable(ue.code)
+	}
+	return !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrTooLarge) // transport errors
+}
+
+type upstreamErr struct{ code int }
+
+func (e *upstreamErr) Error() string { return fmt.Sprintf("drive: upstream error (HTTP %d)", e.code) }
 
 func (d *Backend) Read(ctx context.Context, p string) ([]byte, error) {
 	b, _, err := d.ReadRev(ctx, p)
@@ -195,9 +267,24 @@ func (d *Backend) download(ctx context.Context, id string) ([]byte, error) {
 	}
 	if resp.StatusCode/100 != 2 {
 		log.Printf("drive: download %s: %d", id, resp.StatusCode)
-		return nil, fmt.Errorf("drive: upstream error (HTTP %d)", resp.StatusCode)
+		return nil, &upstreamErr{resp.StatusCode}
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	return readCapped(resp.Body)
+}
+
+// MaxRead caps any single download. Exceeding it is an error
+// (store.ErrTooLarge), never a silent truncation.
+var MaxRead int64 = 32 << 20
+
+func readCapped(r io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, MaxRead+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > MaxRead {
+		return nil, fmt.Errorf("%w (> %d bytes)", store.ErrTooLarge, MaxRead)
+	}
+	return b, nil
 }
 
 func (d *Backend) Write(ctx context.Context, p string, data []byte) error {

@@ -68,6 +68,10 @@ type Vault struct {
 	acl   func() *acl.ACL
 	now   func() time.Time
 	locks sync.Map // record path or "proj:<p>" -> *sync.Mutex
+	// dirty holds projects whose _index.json may be stale because a derived
+	// update failed after a durable record write; the next index access
+	// rebuilds it from records (and saves it) instead of trusting the file.
+	dirty sync.Map // project -> struct{}
 }
 
 func New(b store.Backend, aclFn func() *acl.ACL) *Vault {

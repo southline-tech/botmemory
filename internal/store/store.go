@@ -12,6 +12,9 @@ var (
 	ErrNotFound = errors.New("store: not found")
 	// ErrPrecondition is returned by WriteIf when the file's revision changed.
 	ErrPrecondition = errors.New("store: precondition failed")
+	// ErrTooLarge is returned when a file exceeds the backend's read cap;
+	// backends must never return a silently truncated file.
+	ErrTooLarge = errors.New("store: file too large")
 )
 
 // Backend is the minimal file-like storage botVault needs. Implementations:
