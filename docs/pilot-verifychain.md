@@ -103,7 +103,14 @@ ACL stays in force for up to about 5 minutes.
 
 Only against memory and the fake Drive (`internal/acladmin`,
 `internal/drive` `TestACLAdminOnDrive`, `cmd/botvault` `TestACLCommandMemory`).
-No real pilot tokens have been granted.
+On real Drive, 2026-10-26: the three pilot bots (pm-verifychain owner,
+implementor-verifychain write, reviewer-verifychain write, on `verifychain`
+only) were granted and smoke-tested. Each token did put, get and search on
+verifychain and was denied on other projects. A throwaway bot, `qa-throwaway`,
+was granted and revoked during QA, and is no longer in `_acl.json` (when
+`botvault acl remove qa-throwaway` ran it reported "no such bot", so the
+entry had already been removed). `acl list` now shows exactly the three pilot bots, all
+active.
 
 ## Server environment and restart (names only, never values)
 
@@ -127,19 +134,41 @@ consent and code exchange; `serve` doesn't read it.
 The OAuth client id and secret live in the **box's env secrets** (already in the
 environment). They are never in a `.env` file, the repo, or chat.
 
-Restart recipe:
+Restart: run the script from the repo root. Don't paste the steps into your
+shell.
 
 ```sh
-pkill -f 'botvault serve' || true                       # stop (the flock is released on exit)
-export BOTVAULT_OAUTH_REFRESH_TOKEN="$(cat /workspace/loops/RAD-280-oauth/refresh_token)"
-export BOTVAULT_DRIVE_ROOT_ID="$(cat /workspace/loops/RAD-280-oauth/drive_root_id)"
-: "${BOTVAULT_OAUTH_CLIENT_ID:?missing}" "${BOTVAULT_OAUTH_CLIENT_SECRET:?missing}"
-nohup botvault serve >/workspace/loops/RAD-280-pilot/serve.log 2>&1 &   # binds 127.0.0.1:8787
-sleep 2
-# health: there is no /health endpoint, so an unauthenticated POST to /mcp
-# should get 401 (server up, auth enforced)
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8787/mcp   # expect 401
+scripts/restart_serve.sh
 ```
+
+It runs these steps in order and stops at the first failure:
+
+1. **Binary.** It uses `$HOME/.local/bin/botvault` (`BOTVAULT_BIN` overrides).
+   If that's missing it runs `scripts/setup_box.sh` to build it, and fails if
+   there is still no binary.
+2. **Env.** It checks that `refresh_token` and `drive_root_id` exist and are
+   non-empty in `/workspace/loops/RAD-280-oauth` (`BOTVAULT_OAUTH_DIR`
+   overrides), then loads them. It requires `BOTVAULT_OAUTH_CLIENT_ID`,
+   `BOTVAULT_OAUTH_CLIENT_SECRET`, `BOTVAULT_OAUTH_REFRESH_TOKEN` and
+   `BOTVAULT_DRIVE_ROOT_ID` to be non-empty. The client id and secret come from
+   the box env secrets.
+3. **Log dir.** `/workspace/loops/RAD-280-pilot` (`BOTVAULT_LOG_DIR`
+   overrides) is created with mode 0700. If it already exists, the script
+   refuses unless the dir is yours and 0700.
+4. **Stop.** It stops only a process whose command line is exactly
+   `"$BIN" serve`, then polls for up to 15s (`STOP_TIMEOUT`). If the old
+   process is still running, it fails **without** starting a new one.
+5. **Start and check.** It starts `"$BIN" serve` on `127.0.0.1:8787`
+   (`BOTVAULT_ADDR`). It then confirms the new process is alive and that an
+   unauthenticated `POST /mcp` returns 401. It polls for up to 10s.
+
+Steps 1 to 3 fail before anything is stopped, so a missing binary, env value
+or log dir never takes down a running server. The script prints names only,
+never values.
+
+The server log (stdout and stderr) is appended to
+`/workspace/loops/RAD-280-pilot/serve.log`. It holds no tokens; check it first if
+the health check fails.
 
 For a full check, run an MCP `ping` with a bot's token (read from its file,
 never echoed).
