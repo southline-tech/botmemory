@@ -15,12 +15,12 @@ import (
 
 func newVault(t *testing.T) (*Vault, *store.Memory) {
 	t.Helper()
-	h := acl.HashToken("x")
+	h := acl.HashToken
 	a, err := acl.Parse([]byte(fmt.Sprintf(`{"bots":{
 	 "pm":{"token_sha256":%q,"roles":{"vc":"owner"}},
 	 "impl":{"token_sha256":%q,"roles":{"vc":"write"}},
 	 "ro":{"token_sha256":%q,"roles":{"vc":"read"}},
-	 "grok":{"token_sha256":%q,"roles":{"vc":"write","other":"write","secret":"write"}}}}`, h, h, h, h)))
+	 "grok":{"token_sha256":%q,"roles":{"vc":"write","other":"write","secret":"write"}}}}`, h("pm"), h("impl"), h("ro"), h("grok"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,5 +223,57 @@ func TestValidation(t *testing.T) {
 		if _, err := v.Put(ctx, "pm", in); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%+v: %v", in, err)
 		}
+	}
+}
+
+// Finding 4: a write from another process (simulated by writing the backend
+// directly) between our read and write must fail with CONFLICT.
+type racingBackend struct {
+	*store.Memory
+	once sync.Once
+}
+
+func (r *racingBackend) WriteIf(ctx context.Context, p string, d []byte, rev string) error {
+	r.once.Do(func() { r.Memory.Write(ctx, p, []byte(`{"key":"k1","version":99}`)) })
+	return r.Memory.WriteIf(ctx, p, d, rev)
+}
+
+func TestStoragePreconditionCrossProcess(t *testing.T) {
+	v, m := newVault(t)
+	put(v, "pm", nil, "a")
+	rb := &racingBackend{Memory: m}
+	v.b = rb
+	if _, err := put(v, "pm", iv(1), "b"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("want CONFLICT from storage precondition, got %v", err)
+	}
+	rb2 := &racingBackend{Memory: store.NewMemory()}
+	v.b = rb2
+	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "new", Title: "t"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("create raced by another process: %v", err)
+	}
+}
+
+// Finding 6: a failed record write leaves history consistent and a retry works.
+func TestCommitFailureThenRetry(t *testing.T) {
+	v, m := newVault(t)
+	put(v, "pm", nil, "a")
+	m.FailWrite = func(p string) error {
+		if p == "projects/vc/records/k1.json" {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	if _, err := put(v, "pm", iv(1), "b"); err == nil {
+		t.Fatal("expected failure")
+	}
+	m.FailWrite = nil
+	if r, _ := v.Get(ctx, "pm", "vc", "k1", 0); r.Version != 1 || r.Body != "a" {
+		t.Fatalf("record changed: %+v", r)
+	}
+	if r, err := put(v, "pm", iv(1), "b"); err != nil || r.Version != 2 {
+		t.Fatal(r, err)
+	}
+	if old, _ := v.Get(ctx, "pm", "vc", "k1", 1); old.Body != "a" {
+		t.Fatalf("history wrong: %+v", old)
 	}
 }

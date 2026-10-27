@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,7 @@ type fakeDrive struct {
 type ffile struct {
 	id, name, mime, parent string
 	data                   []byte
+	seq, version           int
 }
 
 var qRE = regexp.MustCompile(`^'([^']+)' in parents(?: and name = '((?:[^'\\]|\\.)*)')? and trashed = false(?: and mimeType (=|!=) '([^']+)')?$`)
@@ -46,15 +49,24 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := strings.NewReplacer(`\'`, `'`, `\\`, `\`).Replace(m[2])
-		out := []map[string]string{}
+		if r.URL.Query().Get("orderBy") != "createdTime" {
+			http.Error(w, "missing orderBy", 400)
+			return
+		}
+		xs := []*ffile{}
 		for _, x := range f.files {
+			xs = append(xs, x)
+		}
+		sort.Slice(xs, func(i, j int) bool { return xs[i].seq < xs[j].seq })
+		out := []map[string]string{}
+		for _, x := range xs {
 			if x.parent != m[1] || (m[2] != "" && x.name != name) {
 				continue
 			}
 			if m[3] == "=" && x.mime != m[4] || m[3] == "!=" && x.mime == m[4] {
 				continue
 			}
-			out = append(out, map[string]string{"id": x.id, "name": x.name, "mimeType": x.mime})
+			out = append(out, map[string]string{"id": x.id, "name": x.name, "mimeType": x.mime, "version": strconv.Itoa(x.version)})
 		}
 		json.NewEncoder(w).Encode(map[string]any{"files": out})
 	case r.Method == "GET" && strings.HasPrefix(p, "/drive/v3/files/"):
@@ -84,7 +96,9 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dp, _ := mr.NextPart()
 		data, _ := io.ReadAll(dp)
 		if r.Method == "PATCH" {
-			f.files[strings.TrimPrefix(p, "/upload/drive/v3/files/")].data = data
+			x := f.files[strings.TrimPrefix(p, "/upload/drive/v3/files/")]
+			x.data = data
+			x.version++
 			w.Write([]byte(`{}`))
 			return
 		}
@@ -97,8 +111,8 @@ func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeDrive) add(name, mt, parent string, data []byte) string {
 	f.n++
-	id := "id" + string(rune('A'+f.n))
-	f.files[id] = &ffile{id: id, name: name, mime: mt, parent: parent, data: data}
+	id := "id" + strconv.Itoa(f.n)
+	f.files[id] = &ffile{id: id, name: name, mime: mt, parent: parent, data: data, seq: f.n, version: 1}
 	return id
 }
 
@@ -148,5 +162,91 @@ func TestDriveBackend(t *testing.T) {
 	}
 	if len(fd.files) != 7 { // projects, vc, records, note, spec + 2 files
 		t.Fatalf("files=%d (duplicate folders?)", len(fd.files))
+	}
+}
+
+func newFake(t *testing.T) (*fakeDrive, func() *Backend) {
+	fd := &fakeDrive{files: map[string]*ffile{}}
+	srv := httptest.NewServer(fd)
+	t.Cleanup(srv.Close)
+	return fd, func() *Backend {
+		b := New(&http.Client{Transport: authRT{}}, "ROOT")
+		b.Base = srv.URL
+		return b
+	}
+}
+
+// Finding 4: WriteIf honours the Drive version precondition.
+func TestDriveWriteIf(t *testing.T) {
+	_, nb := newFake(t)
+	b, ctx := nb(), context.Background()
+	if err := b.WriteIf(ctx, "p/k.json", []byte("a"), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.WriteIf(ctx, "p/k.json", []byte("b"), ""); err != store.ErrPrecondition {
+		t.Fatal("create-only overwrote:", err)
+	}
+	_, rev, _ := b.ReadRev(ctx, "p/k.json")
+	nb().Write(ctx, "p/k.json", []byte("other process")) // separate instance
+	if err := b.WriteIf(ctx, "p/k.json", []byte("c"), rev); err != store.ErrPrecondition {
+		t.Fatal("stale rev accepted:", err)
+	}
+	got, rev, _ := b.ReadRev(ctx, "p/k.json")
+	if string(got) != "other process" {
+		t.Fatal(string(got))
+	}
+	if err := b.WriteIf(ctx, "p/k.json", []byte("d"), rev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Finding 5: concurrent first writes create each folder exactly once, and
+// pre-existing duplicates resolve to the oldest.
+func TestDriveFolderRaceAndDuplicates(t *testing.T) {
+	fd, nb := newFake(t)
+	b, ctx := nb(), context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := b.Write(ctx, "projects/new/records/k"+strconv.Itoa(i)+".json", []byte("x")); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	folders := map[string]int{}
+	for _, x := range fd.files {
+		if x.mime == folderMime {
+			folders[x.parent+"/"+x.name]++
+		}
+	}
+	for k, n := range folders {
+		if n != 1 {
+			t.Fatalf("folder %s created %d times", k, n)
+		}
+	}
+	// Inject a newer duplicate "dup" folder; the oldest must win everywhere.
+	b.Write(ctx, "dup/a.json", []byte("old"))
+	fd.mu.Lock()
+	fd.add("dup", folderMime, "ROOT", nil)
+	fd.mu.Unlock()
+	if got, err := nb().Read(ctx, "dup/a.json"); err != nil || string(got) != "old" {
+		t.Fatal("duplicate not resolved to oldest:", string(got), err)
+	}
+}
+
+// Finding 9: Drive error bodies never reach callers.
+func TestDriveErrorSanitized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"secret detail ROOT-folder-id"}`, 403)
+	}))
+	defer srv.Close()
+	b := New(srv.Client(), "ROOT")
+	b.Base = srv.URL
+	_, err := b.Read(context.Background(), "x/y.json")
+	if err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "/drive/") || err.Error() != "drive: upstream error (HTTP 403)" {
+		t.Fatalf("leaky error: %v", err)
 	}
 }

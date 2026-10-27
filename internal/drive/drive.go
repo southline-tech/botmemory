@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -27,8 +28,12 @@ type Backend struct {
 	RootID string
 	Base   string // default https://www.googleapis.com; overridable for tests
 
-	mu      sync.Mutex
+	mu      sync.Mutex        // guards folders
 	folders map[string]string // vault dir path -> folder id
+	// createMu serializes folder lookup+create so concurrent first writes
+	// cannot create duplicate folders in this process. Duplicates created by
+	// anything else are resolved deterministically: oldest createdTime wins.
+	createMu sync.Mutex
 }
 
 func New(hc *http.Client, rootID string) *Backend {
@@ -39,6 +44,7 @@ type file struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	MimeType string `json:"mimeType"`
+	Version  string `json:"version"` // monotonically increasing per change
 }
 
 func q(s string) string { return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) }
@@ -54,7 +60,9 @@ func (d *Backend) do(req *http.Request, out any) error {
 		return store.ErrNotFound
 	}
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("drive: %s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, bytes.TrimSpace(body))
+		// Full detail goes to the server log only; bots get a generic error.
+		log.Printf("drive: %s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, bytes.TrimSpace(body))
+		return fmt.Errorf("drive: upstream error (HTTP %d)", resp.StatusCode)
 	}
 	if out != nil {
 		return json.Unmarshal(body, out)
@@ -66,7 +74,7 @@ func (d *Backend) query(ctx context.Context, qs string) ([]file, error) {
 	var all []file
 	tok := ""
 	for {
-		v := url.Values{"q": {qs}, "fields": {"nextPageToken,files(id,name,mimeType)"}, "pageSize": {"1000"},
+		v := url.Values{"q": {qs}, "fields": {"nextPageToken,files(id,name,mimeType,version)"}, "pageSize": {"1000"}, "orderBy": {"createdTime"},
 			"supportsAllDrives": {"true"}, "includeItemsFromAllDrives": {"true"}}
 		if tok != "" {
 			v.Set("pageToken", tok)
@@ -100,7 +108,10 @@ func (d *Backend) child(ctx context.Context, parent, name string, folder bool) (
 	if len(fs) == 0 {
 		return nil, store.ErrNotFound
 	}
-	return &fs[0], nil
+	if len(fs) > 1 {
+		log.Printf("drive: %d items named %q in %s; using oldest (%s)", len(fs), name, parent, fs[0].ID)
+	}
+	return &fs[0], nil // results are ordered by createdTime: oldest wins
 }
 
 // folderID resolves (and optionally creates) the folder for dir.
@@ -112,8 +123,21 @@ func (d *Backend) folderID(ctx context.Context, dir string, create bool) (string
 	if ok {
 		return id, nil
 	}
+	d.createMu.Lock()
+	defer d.createMu.Unlock()
+	return d.folderIDLocked(ctx, dir, create)
+}
+
+func (d *Backend) folderIDLocked(ctx context.Context, dir string, create bool) (string, error) {
+	dir = strings.Trim(dir, "/")
+	d.mu.Lock()
+	id, ok := d.folders[dir]
+	d.mu.Unlock()
+	if ok {
+		return id, nil
+	}
 	parentDir, name := path.Split(dir)
-	parent, err := d.folderID(ctx, parentDir, create)
+	parent, err := d.folderIDLocked(ctx, parentDir, create)
 	if err != nil {
 		return "", err
 	}
@@ -135,36 +159,69 @@ func (d *Backend) folderID(ctx context.Context, dir string, create bool) (string
 }
 
 func (d *Backend) Read(ctx context.Context, p string) ([]byte, error) {
+	b, _, err := d.ReadRev(ctx, p)
+	return b, err
+}
+
+func (d *Backend) lookup(ctx context.Context, p string, create bool) (pid string, f *file, err error) {
 	dir, name := path.Split(strings.Trim(p, "/"))
-	pid, err := d.folderID(ctx, dir, false)
-	if err != nil {
-		return nil, err
+	if pid, err = d.folderID(ctx, dir, create); err != nil {
+		return "", nil, err
 	}
-	f, err := d.child(ctx, pid, name, false)
+	f, err = d.child(ctx, pid, name, false)
+	return pid, f, err
+}
+
+// ReadRev returns the content and the file's Drive "version" as the revision.
+func (d *Backend) ReadRev(ctx context.Context, p string) ([]byte, string, error) {
+	_, f, err := d.lookup(ctx, p, false)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	req, _ := http.NewRequestWithContext(ctx, "GET", d.Base+"/drive/v3/files/"+url.PathEscape(f.ID)+"?alt=media&supportsAllDrives=true", nil)
+	b, err := d.download(ctx, f.ID)
+	return b, f.Version, err
+}
+
+func (d *Backend) download(ctx context.Context, id string) ([]byte, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", d.Base+"/drive/v3/files/"+url.PathEscape(id)+"?alt=media&supportsAllDrives=true", nil)
 	resp, err := d.HC.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("drive: download %s: %d", p, resp.StatusCode)
+		log.Printf("drive: download %s: %d", id, resp.StatusCode)
+		return nil, fmt.Errorf("drive: upstream error (HTTP %d)", resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 }
 
 func (d *Backend) Write(ctx context.Context, p string, data []byte) error {
-	dir, name := path.Split(strings.Trim(p, "/"))
-	pid, err := d.folderID(ctx, dir, true)
-	if err != nil {
-		return err
-	}
-	existing, err := d.child(ctx, pid, name, false)
+	return d.write(ctx, p, data, nil)
+}
+
+// WriteIf checks the file's current Drive version against rev immediately
+// before uploading. Drive offers no compare-and-swap for files.update, so a
+// small window remains; the server's single-instance lock closes it for
+// botVault (the only writer, drive.file scope).
+func (d *Backend) WriteIf(ctx context.Context, p string, data []byte, rev string) error {
+	return d.write(ctx, p, data, &rev)
+}
+
+func (d *Backend) write(ctx context.Context, p string, data []byte, rev *string) error {
+	_, name := path.Split(strings.Trim(p, "/"))
+	pid, existing, err := d.lookup(ctx, p, true)
 	if err != nil && err != store.ErrNotFound {
 		return err
+	}
+	if rev != nil {
+		cur := ""
+		if existing != nil {
+			cur = existing.Version
+		}
+		if cur != *rev {
+			return store.ErrPrecondition
+		}
 	}
 	var meta map[string]any
 	method, u := "POST", d.Base+"/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id"

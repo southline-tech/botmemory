@@ -133,3 +133,63 @@ func TestToolFlowStampsAuthorFromToken(t *testing.T) {
 		t.Fatal("unknown tool accepted")
 	}
 }
+
+func raw(t *testing.T, s *httptest.Server, hdr map[string]string, body string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest("POST", s.URL, strings.NewReader(body))
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+const okBody = `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+
+func TestBearerSchemeRequired(t *testing.T) {
+	s := newSrv(t)
+	for h, want := range map[string]int{"pm-tok": 401, "Token pm-tok": 401, "Bearer ": 401, "Bearer pm-tok": 200, "bearer pm-tok": 200} {
+		if code, _ := raw(t, s, map[string]string{"Authorization": h}, okBody); code != want {
+			t.Errorf("%q: %d want %d", h, code, want)
+		}
+	}
+}
+
+func TestJSONRPCConformance(t *testing.T) {
+	s := newSrv(t)
+	auth := map[string]string{"Authorization": "Bearer pm-tok"}
+	for body, want := range map[string]float64{
+		`[` + okBody + `]`:                         -32600,
+		`{"jsonrpc":"1.0","id":1,"method":"ping"}`: -32600,
+		`{"id":1,"method":"ping"}`:                 -32600,
+		`{not json`:                                -32700,
+	} {
+		_, out := raw(t, s, auth, body)
+		e, _ := out["error"].(map[string]any)
+		if e == nil || e["code"].(float64) != want {
+			t.Errorf("%s: %v want %v", body, out, want)
+		}
+	}
+	if code, _ := raw(t, s, auth, `{"jsonrpc":"2.0","method":"notifications/initialized"}`); code != 202 {
+		t.Errorf("notification: %d", code)
+	}
+}
+
+func TestOriginCheck(t *testing.T) {
+	s := newSrv(t)
+	for o, want := range map[string]int{"https://evil.example": 403, "http://localhost:3000": 200, "http://127.0.0.1": 200, "": 200} {
+		h := map[string]string{"Authorization": "Bearer pm-tok"}
+		if o != "" {
+			h["Origin"] = o
+		}
+		if code, _ := raw(t, s, h, okBody); code != want {
+			t.Errorf("origin %q: %d want %d", o, code, want)
+		}
+	}
+}

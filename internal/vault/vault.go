@@ -47,6 +47,8 @@ type Record struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Links     []string  `json:"links"`
+
+	rev string // storage revision this copy was read at (for WriteIf)
 }
 
 // PutInput is the caller-controlled part of a record.
@@ -113,7 +115,7 @@ func (v *Vault) lock(p string) func() {
 }
 
 func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
-	data, err := v.b.Read(ctx, p)
+	data, rev, err := v.b.ReadRev(ctx, p)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrNotFound
 	}
@@ -124,12 +126,24 @@ func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, fmt.Errorf("corrupt record %s: %w", p, err)
 	}
+	r.rev = rev
 	return &r, nil
 }
 
-// commit writes the prior version to history (if any), then the new record.
+// commit writes the prior version to history (if any), then the new record
+// conditionally on the storage revision it was read at.
+//
+// Crash consistency: history/vN is a copy of record vN, which is immutable
+// once written, so the history write is idempotent. If the record write then
+// fails, history/vN merely duplicates the still-current vN (history() hides
+// versions >= current) and a retry rewrites identical bytes. The record write
+// is the commit point; a concurrent writer (another process) fails it with
+// ErrPrecondition -> CONFLICT, in addition to the in-process key lock and the
+// single-instance lock file.
 func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) error {
+	rev := ""
 	if prev != nil {
+		rev = prev.rev
 		b, _ := json.MarshalIndent(prev, "", "  ")
 		if err := v.b.Write(ctx, histPath(project, prev.Key, prev.Version), b); err != nil {
 			return err
@@ -137,7 +151,11 @@ func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) 
 	}
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
-	return v.b.Write(ctx, recPath(project, next.Key), b)
+	err := v.b.WriteIf(ctx, recPath(project, next.Key), b, rev)
+	if errors.Is(err, store.ErrPrecondition) {
+		return fmt.Errorf("%w: %s changed in storage since it was read; re-get and retry", ErrConflict, next.Key)
+	}
+	return err
 }
 
 func (v *Vault) ListProjects(ctx context.Context, bot string) ([]string, error) {

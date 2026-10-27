@@ -19,3 +19,11 @@ cp .env.example .env   # fill in; .env is gitignored
 go build -o botvault ./cmd/botvault && ./botvault serve
 for p in acl store vault mcp drive; do go test -count=1 -race ./internal/$p/; done   # one suite at a time
 ```
+
+### Safety notes
+- Binds loopback only (`BOTVAULT_ADDR` must be 127.0.0.1/::1/localhost); Origin must be loopback if sent; `Authorization: Bearer` required.
+- Single instance: exclusive flock on `BOTVAULT_LOCK_FILE`. Record writes are also conditional on the storage revision (Drive file `version`), so a stale write from anywhere fails with `CONFLICT`.
+- Save order: history/vN (idempotent copy of immutable vN) then the record (commit point). A failure between leaves the record at vN and a retry is safe.
+- ACL reloads every 60s; after 5 consecutive failures it fails closed (denies all) and logs loudly. Duplicate token hashes and invalid bot ids are rejected.
+- Drive error details are logged server-side only; bots see `drive: upstream error (HTTP n)`.
+- `append` to a missing key returns `NOT_FOUND` (create it with `put` first).

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -10,25 +11,60 @@ import (
 // Memory is an in-process Backend for tests and local dev. Not durable.
 type Memory struct {
 	mu    sync.RWMutex
-	files map[string][]byte
+	files map[string]mfile
+	// FailWrite, if set, is consulted before every write (fault injection).
+	FailWrite func(path string) error
 }
 
-func NewMemory() *Memory { return &Memory{files: map[string][]byte{}} }
+type mfile struct {
+	data []byte
+	rev  int
+}
 
-func (m *Memory) Read(_ context.Context, p string) ([]byte, error) {
+func NewMemory() *Memory { return &Memory{files: map[string]mfile{}} }
+
+func (m *Memory) Read(ctx context.Context, p string) ([]byte, error) {
+	b, _, err := m.ReadRev(ctx, p)
+	return b, err
+}
+
+func (m *Memory) ReadRev(_ context.Context, p string) ([]byte, string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	b, ok := m.files[clean(p)]
+	f, ok := m.files[clean(p)]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, "", ErrNotFound
 	}
-	return append([]byte(nil), b...), nil
+	return append([]byte(nil), f.data...), strconv.Itoa(f.rev), nil
 }
 
-func (m *Memory) Write(_ context.Context, p string, data []byte) error {
+func (m *Memory) Write(ctx context.Context, p string, data []byte) error {
+	return m.write(p, data, nil)
+}
+
+func (m *Memory) WriteIf(_ context.Context, p string, data []byte, rev string) error {
+	return m.write(p, data, &rev)
+}
+
+func (m *Memory) write(p string, data []byte, rev *string) error {
+	if m.FailWrite != nil {
+		if err := m.FailWrite(clean(p)); err != nil {
+			return err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.files[clean(p)] = append([]byte(nil), data...)
+	f, ok := m.files[clean(p)]
+	if rev != nil {
+		cur := ""
+		if ok {
+			cur = strconv.Itoa(f.rev)
+		}
+		if cur != *rev {
+			return ErrPrecondition
+		}
+	}
+	m.files[clean(p)] = mfile{append([]byte(nil), data...), f.rev + 1}
 	return nil
 }
 

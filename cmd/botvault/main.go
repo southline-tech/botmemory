@@ -9,9 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
-	"sync/atomic"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/radiancelux/botvault/internal/acl"
 	"github.com/radiancelux/botvault/internal/drive"
+	"github.com/radiancelux/botvault/internal/instance"
 	"github.com/radiancelux/botvault/internal/mcp"
 	"github.com/radiancelux/botvault/internal/store"
 	"github.com/radiancelux/botvault/internal/vault"
@@ -78,49 +80,67 @@ func backend(ctx context.Context) (store.Backend, error) {
 	return drive.New(oauth2.NewClient(ctx, ts), root), nil
 }
 
+// checkAddr refuses any bind address that is not loopback (spec: local only).
+func checkAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("BOTVAULT_ADDR %q: %w", addr, err)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("BOTVAULT_ADDR %q: refusing non-loopback bind (use 127.0.0.1)", addr)
+	}
+	return nil
+}
+
+func lockPath() string {
+	if p := os.Getenv("BOTVAULT_LOCK_FILE"); p != "" {
+		return p
+	}
+	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
+		return filepath.Join(d, "botvault.lock")
+	}
+	return filepath.Join(os.TempDir(), "botvault.lock")
+}
+
 func serve() error {
 	ctx := context.Background()
+	addr := os.Getenv("BOTVAULT_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8787"
+	}
+	if err := checkAddr(addr); err != nil {
+		return err
+	}
+	lk, err := instance.Acquire(lockPath())
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
 	b, err := backend(ctx)
 	if err != nil {
 		return err
 	}
 	// ACL: _acl.json in the vault root (Drive), or BOTVAULT_ACL_FILE locally.
-	var cur atomic.Pointer[acl.ACL]
-	load := func() error {
-		var data []byte
-		var err error
+	// Reloaded every 60s; fails closed after 5 consecutive failures.
+	loader := &acl.Loader{MaxFailures: 5, Fetch: func() ([]byte, error) {
 		if f := os.Getenv("BOTVAULT_ACL_FILE"); f != "" {
-			data, err = os.ReadFile(f)
-		} else {
-			data, err = b.Read(ctx, "_acl.json")
+			return os.ReadFile(f)
 		}
-		if err != nil {
-			return fmt.Errorf("load ACL: %w", err)
-		}
-		a, err := acl.Parse(data)
-		if err != nil {
-			return err
-		}
-		cur.Store(a)
-		return nil
+		return b.Read(ctx, "_acl.json")
+	}}
+	if err := loader.Load(); err != nil {
+		return fmt.Errorf("load ACL: %w", err)
 	}
-	if err := load(); err != nil {
-		return err
-	}
-	go func() { // pick up revocations without restart
-		for range time.Tick(60 * time.Second) {
-			if err := load(); err != nil {
-				log.Printf("ACL reload failed (keeping previous): %v", err)
-			}
-		}
-	}()
-	aclFn := func() *acl.ACL { return cur.Load() }
-	addr := os.Getenv("BOTVAULT_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8787"
-	}
+	go loader.Run(60*time.Second, nil)
+	aclFn := loader.Current
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", &mcp.Server{V: vault.New(b, aclFn), ACL: aclFn})
 	log.Printf("botvault listening on http://%s/mcp", addr)
-	return (&http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}).ListenAndServe()
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
+	return srv.ListenAndServe()
 }
