@@ -12,8 +12,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/vault"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/vault"
 )
 
 const protocolVersion = "2025-06-18"

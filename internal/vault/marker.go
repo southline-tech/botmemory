@@ -8,7 +8,7 @@ import (
 	"path"
 	"sync"
 
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 // FailClosedOnMarkerError decides what happens when the durable

@@ -9,7 +9,7 @@
 # $PILOT_TOKEN_DIR/<bot>/botvault.token (mode 0600) and NEVER printed.
 set -euo pipefail
 BIN=${BOTVAULT_BIN:-botvault}
-DIR=${PILOT_TOKEN_DIR:-$HOME/.config/botvault/pilot}
+DIR=${PILOT_TOKEN_DIR:-/workspace/loops/RAD-280-pilot}
 PROJECT=verifychain
 BOTS=("pm-verifychain owner" "implementor-verifychain write" "reviewer-verifychain write")
 
@@ -18,6 +18,18 @@ if (( apply )) && [[ "${BOTVAULT_BACKEND:-drive}" == "drive" && "${BOTVAULT_PILO
 	echo "refusing: this would grant REAL tokens in Drive. Needs Brett's approval, then BOTVAULT_PILOT_ALLOW_DRIVE=1." >&2
 	exit 2
 fi
+# Refuse (never chmod) an existing token dir that isn't a real dir, 0700, owned by us.
+check_dir() {
+	local d=$1
+	[[ -e "$d" || -L "$d" ]] || return 0
+	if [[ -L "$d" || ! -d "$d" ]]; then echo "refusing: $d is not a directory" >&2; exit 3; fi
+	local st; st=$(stat -c '%u %a' "$d")
+	if [[ "$st" != "$(id -u) 700" ]]; then
+		echo "refusing: $d must be owned by uid $(id -u) with mode 700 (is: uid/mode $st); fix it by hand" >&2; exit 3
+	fi
+}
+check_dir "$DIR"
+for e in "${BOTS[@]}"; do read -r b _ <<<"$e"; check_dir "$DIR/$b"; done
 for e in "${BOTS[@]}"; do
 	read -r bot role <<<"$e"
 	out="$DIR/$bot/botvault.token"

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/radiancelux/botvault/internal/vault"
+	"github.com/southline-tech/botvault/internal/vault"
 )
 
 var errUnknownTool = errors.New("unknown tool")

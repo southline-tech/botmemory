@@ -6,22 +6,25 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/radiancelux/botvault/internal/acladmin"
-	"github.com/radiancelux/botvault/internal/instance"
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/acladmin"
+	"github.com/southline-tech/botvault/internal/instance"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 const aclUsage = `usage:
   botvault acl grant <bot> <project> <role> --token-out FILE [--rotate]
   botvault acl revoke <bot> [--force]
+  botvault acl remove <bot> [--force]
   botvault acl list
 roles: read | write | owner. A new bot (or --rotate) gets a fresh token written
 ONLY to FILE (mode 0600, must not exist); only its hash goes into _acl.json.
 revoke disables the bot's token for EVERY project; it refuses to remove the
-last active owner of any project unless --force.`
+last active owner of any project unless --force. remove deletes the bot's
+entry entirely (same last-owner rule).`
 
 // runACL implements `botvault acl ...` against b. It never prints a token
 // or a hash.
@@ -55,7 +58,7 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 	switch pos[0] {
 	case "grant":
 		if force {
-			return errors.New("--force applies only to revoke")
+			return errors.New("--force applies only to revoke and remove")
 		}
 		if len(pos) != 4 {
 			return errors.New(aclUsage)
@@ -81,6 +84,17 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 			return err
 		}
 		fmt.Fprintf(out, "revoked %s for all projects; its token stops working at the next ACL reload (within 60s)\n", pos[1])
+	case "remove":
+		if rotate || tokenOut != "" {
+			return errors.New("remove takes only --force")
+		}
+		if len(pos) != 2 {
+			return errors.New(aclUsage)
+		}
+		if err := ad.Remove(ctx, pos[1], force); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "removed %s from the ACL; its token stops working at the next ACL reload (within 60s)\n", pos[1])
 	case "list":
 		if len(pos) != 1 {
 			return errors.New(aclUsage)
@@ -115,17 +129,26 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 // instance lock: the server only ever reads _acl.json, so it never needs it.
 // Like the instance lock it covers ONE HOST only; two hosts editing the same
 // ACL rely on the Drive version check plus the re-read verification.
-func aclLockPath(rootID string) string {
+// The default lives in a per-user 0700 dir (instance.UserDir), not
+// world-writable /var/tmp.
+func aclLockPath(rootID string) (string, error) {
 	if p := os.Getenv("BOTVAULT_ACL_LOCK_FILE"); p != "" {
-		return p
+		return p, nil
 	}
-	return "/var/tmp/botvault-acl-" + rootHash(rootID) + ".lock"
+	d, err := instance.UserDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "acl-"+rootHash(rootID)+".lock"), nil
 }
 
 // runACLLocked holds the exclusive (non-blocking, O_NOFOLLOW) ACL lock for
 // the whole command; a concurrent run is refused, not queued.
 func runACLLocked(ctx context.Context, b store.Backend, rootID string, args []string, out io.Writer) error {
-	lp := aclLockPath(rootID)
+	lp, err := aclLockPath(rootID)
+	if err != nil {
+		return err
+	}
 	l, err := instance.Acquire(lp)
 	if err != nil {
 		if errors.Is(err, instance.ErrRunning) {

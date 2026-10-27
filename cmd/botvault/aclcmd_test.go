@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/instance"
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/instance"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 // M3: the CLI never prints a token or a hash, and works on the memory backend.
@@ -46,6 +46,19 @@ func TestACLCommandMemory(t *testing.T) {
 	}
 	if err := runACL(ctx, m, []string{"revoke", "pm-verifychain", "--force"}, &out); err != nil {
 		t.Fatal(err)
+	}
+	run("grant", "tmp-bot", "verifychain", "read", "--token-out", filepath.Join(dir, "tmp.token"))
+	run("remove", "tmp-bot")
+	out.Reset()
+	run("list")
+	if strings.Contains(out.String(), "tmp-bot") {
+		t.Fatal("removed bot still listed")
+	}
+	if err := runACL(ctx, m, []string{"remove", "tmp-bot"}, &out); err == nil {
+		t.Fatal("removing a missing bot succeeded")
+	}
+	if err := runACL(ctx, m, []string{"remove", "x", "--token-out", "f"}, &out); err == nil {
+		t.Fatal("--token-out accepted on remove")
 	}
 	if err := runACL(ctx, m, []string{"grant", "x", "p", "read", "--force", "--token-out", filepath.Join(dir, "x")}, &out); err == nil {
 		t.Fatal("--force accepted on grant")
@@ -89,8 +102,26 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 
 func TestACLLockPath(t *testing.T) {
 	t.Setenv("BOTVAULT_ACL_LOCK_FILE", "")
-	p := aclLockPath("someroot")
-	if !strings.HasPrefix(p, "/var/tmp/botvault-acl-") || p == aclLockPath("other") || p == lockPath("someroot") {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // must not matter (R4-1)
+	rt := filepath.Dir(mustUserDir(t))
+	p, err := aclLockPath("someroot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _ := aclLockPath("other")
+	if !strings.HasPrefix(p, filepath.Join(rt, "botvault", "acl-")) || strings.HasPrefix(p, "/var/tmp") || p == q || p == lockPath("someroot") {
 		t.Fatalf("bad acl lock path %q", p)
 	}
+	if fi, err := os.Stat(filepath.Dir(p)); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("lock dir not 0700: %v %v", fi, err)
+	}
+}
+
+func mustUserDir(t *testing.T) string {
+	t.Helper()
+	d, err := instance.UserDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
 }

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 // RootFolderName is the app folder created in My Drive by Bootstrap.

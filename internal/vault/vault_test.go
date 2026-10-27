@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 func newVault(t *testing.T) (*Vault, *store.Memory) {

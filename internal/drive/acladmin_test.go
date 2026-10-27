@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/acladmin"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/acladmin"
 )
 
 // M3: `botvault acl` against the (fake) Drive backend: the version check

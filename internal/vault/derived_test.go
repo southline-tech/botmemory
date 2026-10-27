@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 func TestIndexAndLogMaintained(t *testing.T) {

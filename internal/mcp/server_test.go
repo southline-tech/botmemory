@@ -5,16 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/radiancelux/botvault/internal/drive"
+	"github.com/southline-tech/botvault/internal/drive"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/radiancelux/botvault/internal/acl"
-	"github.com/radiancelux/botvault/internal/store"
-	"github.com/radiancelux/botvault/internal/vault"
+	"github.com/southline-tech/botvault/internal/acl"
+	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/vault"
 )
 
 func newSrv(t *testing.T) *httptest.Server {

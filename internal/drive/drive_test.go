@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radiancelux/botvault/internal/store"
+	"github.com/southline-tech/botvault/internal/store"
 )
 
 // fakeDrive implements just enough of Drive v3 REST for the backend.
