@@ -166,8 +166,22 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	if err := v.beginWrite(ctx, project); err != nil {
 		return err
 	}
-	indexOK := true
-	defer func() { v.endWrite(ctx, project, indexOK) }()
+	// R4-1: assume the index is NOT good until afterWrite reports it saved.
+	// If the record never committed, the index is unaffected. A panic after
+	// the commit marks the project dirty and keeps the marker, then re-panics.
+	committed, indexOK := false, false
+	defer func() {
+		ok := !committed || indexOK
+		if p := recover(); p != nil {
+			if committed {
+				v.dirty.Store(project, true)
+				ok = false
+			}
+			v.endWrite(ctx, project, ok)
+			panic(p)
+		}
+		v.endWrite(ctx, project, ok)
+	}()
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
 	err := v.b.WriteIf(ctx, recPath(project, next.Key), b, rev)
@@ -177,6 +191,7 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	if err != nil {
 		return err
 	}
+	committed = true
 	// Record is durable; index and log are derived. Don't fail the write
 	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
 	if err := v.afterWrite(ctx, op, project, next, &indexOK); err != nil {

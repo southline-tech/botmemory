@@ -449,3 +449,89 @@ func TestLogAppendedWhenIndexFails(t *testing.T) {
 		t.Fatal("marker not kept after index failure")
 	}
 }
+
+// R4-1: a panic while saving the index after the record committed must keep
+// the marker, so a restart treats the project as dirty and rebuilds it to
+// the committed version (no stale index trusted).
+func TestIndexSavePanicKeepsMarker(t *testing.T) {
+	v, m := newVault(t)
+	if _, err := put(v, "pm", nil, "one"); err != nil {
+		t.Fatal(err)
+	}
+	m.FailWrite = func(p string) error {
+		if strings.HasSuffix(p, "_index.json") {
+			panic("index save blew up")
+		}
+		return nil
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("panic was swallowed; want re-panic")
+			}
+		}()
+		_, _ = put(v, "pm", iv(1), "two")
+	}()
+	m.FailWrite = nil
+	if _, err := m.Read(ctx, dirtyPath("vc")); err != nil {
+		t.Fatalf("marker removed after panic: %v", err)
+	}
+	if !v.isDirty(ctx, "vc") {
+		t.Fatal("project not dirty in-process after panic")
+	}
+	v2 := New(m, v.acl)
+	if !v2.isDirty(ctx, "vc") {
+		t.Fatal("restart did not see the project as dirty")
+	}
+	idx, _, err := v2.loadIndex(ctx, "vc", false)
+	if err != nil || idx.Entries["k1"].Version != 2 {
+		t.Fatalf("after restart: want k1 v2, got %+v err %v", idx.Entries["k1"], err)
+	}
+	if v2.isDirty(ctx, "vc") {
+		t.Fatal("still dirty after rebuild")
+	}
+	if _, err := m.Read(ctx, dirtyPath("vc")); err == nil {
+		t.Fatal("marker not removed after rebuild")
+	}
+}
+
+// R3-2, fixed order: the marker stays while any writer is in flight, stays
+// after a failed writer even if a later writer succeeds, and goes only once
+// the index has been rebuilt with nothing in flight.
+func TestMarkerFixedOrder(t *testing.T) {
+	v, m := newVault(t)
+	present := func() bool { _, err := m.Read(ctx, dirtyPath("vc")); return err == nil }
+	step := func(name string, want bool) {
+		t.Helper()
+		if got := present(); got != want {
+			t.Fatalf("%s: marker present=%v, want %v", name, got, want)
+		}
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(v.beginWrite(ctx, "vc")) // A
+	step("A begun", true)
+	must(v.beginWrite(ctx, "vc")) // B
+	v.endWrite(ctx, "vc", true)   // A ok, B still in flight
+	step("A done, B in flight", true)
+	v.endWrite(ctx, "vc", true) // B ok, nothing in flight
+	step("A and B done", false)
+
+	must(v.beginWrite(ctx, "vc")) // C
+	must(v.beginWrite(ctx, "vc")) // D
+	v.endWrite(ctx, "vc", false)  // C index failed
+	step("C failed", true)
+	v.endWrite(ctx, "vc", true) // D ok but project dirty
+	step("D ok after C failed", true)
+	if !v.isDirty(ctx, "vc") {
+		t.Fatal("not dirty after C failed")
+	}
+	if _, _, err := v.loadIndex(ctx, "vc", false); err != nil {
+		t.Fatal(err)
+	}
+	step("rebuilt, nothing in flight", false)
+}

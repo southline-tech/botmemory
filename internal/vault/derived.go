@@ -83,15 +83,16 @@ func entryOf(r *Record) IndexEntry {
 // afterWrite updates the index for r and appends the log line, under the
 // project lock. The log line is appended even if the index update fails
 // (the log is independent of the index). An index failure marks the project
-// dirty (rebuilt on next access) and sets *indexOK=false so endWrite keeps
+// dirty (rebuilt on next access) and leaves *indexOK=false (it is set true only after the index saves) so endWrite keeps
 // the durable marker.
 func (v *Vault) afterWrite(ctx context.Context, op, project string, r *Record, indexOK *bool) error {
 	defer v.lock("proj:" + project)()
 	var errs []error
 	if err := v.updateIndex(ctx, project, r); err != nil {
 		v.dirty.Store(project, true)
-		*indexOK = false
 		errs = append(errs, fmt.Errorf("index: %w", err))
+	} else {
+		*indexOK = true
 	}
 	line, _ := json.Marshal(LogEntry{TS: r.UpdatedAt, Bot: r.UpdatedBy, Op: op, Key: r.Key, Kind: r.Kind, Version: r.Version})
 	if err := v.appendLog(ctx, project, append(line, '\n')); err != nil {

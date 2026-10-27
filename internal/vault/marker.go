@@ -15,7 +15,7 @@ import (
 // _index.dirty marker cannot be written before a record commit. true (PM
 // ruling, round 3): the write fails with ErrMarker. false: the write
 // proceeds and only the in-process dirty flag protects the index.
-var FailClosedOnMarkerError = true
+const FailClosedOnMarkerError = true
 
 func dirtyPath(p string) string { return path.Join("projects", p, "_index.dirty") }
 
@@ -95,6 +95,7 @@ func (v *Vault) endWrite(ctx context.Context, project string, indexOK bool) {
 	defer s.mu.Unlock()
 	s.inflight--
 	if !indexOK {
+		v.dirty.Store(project, true)
 		if err := v.b.Write(ctx, dirtyPath(project), []byte("1\n")); err != nil {
 			log.Printf("botvault: %s: re-writing index dirty marker failed: %v", project, err)
 		} else {
