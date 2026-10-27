@@ -80,73 +80,39 @@ func entryOf(r *Record) IndexEntry {
 		Version: r.Version, UpdatedBy: r.UpdatedBy, UpdatedAt: r.UpdatedAt, Summary: sum}
 }
 
-// afterWrite updates the index and appends to the log under the project lock.
-// Drive has no append, so log.jsonl is read-modify-write; single instance +
-// project lock keep it append-only in effect.
-// If the index update fails the project is marked dirty, so the next index
-// access rebuilds from records rather than serving the stale entry.
-func (v *Vault) afterWrite(ctx context.Context, op, project string, r *Record) error {
+// afterWrite updates the index for r and appends the log line, under the
+// project lock. The log line is appended even if the index update fails
+// (the log is independent of the index). An index failure marks the project
+// dirty (rebuilt on next access) and sets *indexOK=false so endWrite keeps
+// the durable marker.
+func (v *Vault) afterWrite(ctx context.Context, op, project string, r *Record, indexOK *bool) error {
 	defer v.lock("proj:" + project)()
+	var errs []error
 	if err := v.updateIndex(ctx, project, r); err != nil {
 		v.dirty.Store(project, true)
-		return fmt.Errorf("index: %w", err)
+		*indexOK = false
+		errs = append(errs, fmt.Errorf("index: %w", err))
 	}
 	line, _ := json.Marshal(LogEntry{TS: r.UpdatedAt, Bot: r.UpdatedBy, Op: op, Key: r.Key, Kind: r.Kind, Version: r.Version})
 	if err := v.appendLog(ctx, project, append(line, '\n')); err != nil {
-		return fmt.Errorf("log: %w", err)
+		errs = append(errs, fmt.Errorf("log: %w", err))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
+// updateIndex applies r to the index incrementally. A full rebuild happens
+// only if the project is dirty (marker found at startup, or an earlier
+// index failure) or the index is missing/corrupt.
 func (v *Vault) updateIndex(ctx context.Context, project string, r *Record) error {
 	idx, rebuilt, err := v.loadIndex(ctx, project, false)
 	if err != nil {
 		return err
 	}
-	if rebuilt { // a rebuild already reflects r and cleared the marker
+	if rebuilt { // a rebuild already reflects r
 		return nil
 	}
 	idx.Entries[r.Key] = entryOf(r)
-	if err := v.saveIndex(ctx, project, idx); err != nil {
-		return err
-	}
-	return v.clearDirty(ctx, project)
-}
-
-func dirtyPath(p string) string { return path.Join("projects", p, "_index.dirty") }
-
-// markDirty writes the durable projects/<p>/_index.dirty marker (before a
-// record commit). Best effort: if it fails the in-process mark still forces
-// a rebuild for this server's lifetime.
-func (v *Vault) markDirty(ctx context.Context, project string) {
-	v.dirty.Store(project, true)
-	if err := v.b.Write(ctx, dirtyPath(project), []byte("1\n")); err != nil {
-		log.Printf("botvault: %s: writing index dirty marker failed: %v", project, err)
-	}
-}
-
-// clearDirty removes the marker after the index is saved.
-func (v *Vault) clearDirty(ctx context.Context, project string) error {
-	if err := v.b.Delete(ctx, dirtyPath(project)); err != nil {
-		v.dirty.Store(project, true)
-		return fmt.Errorf("clear dirty marker: %w", err)
-	}
-	v.dirty.Store(project, false)
-	return nil
-}
-
-// isDirty consults the in-process cache, then (first access after a
-// restart) the durable marker. An unreadable marker counts as dirty.
-func (v *Vault) isDirty(ctx context.Context, project string) bool {
-	if d, ok := v.dirty.Load(project); ok {
-		return d.(bool)
-	}
-	_, err := v.b.Read(ctx, dirtyPath(project))
-	d := !errors.Is(err, store.ErrNotFound)
-	if err == nil || errors.Is(err, store.ErrNotFound) {
-		v.dirty.Store(project, d) // cache only a definite answer
-	}
-	return d
+	return v.saveIndex(ctx, project, idx)
 }
 
 // appendLog appends to log.jsonl, rotating it into log-NNNN.jsonl first when

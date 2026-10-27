@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/radiancelux/botvault/internal/store"
@@ -321,5 +324,128 @@ func TestDirtyMarkerSurvivesRestart(t *testing.T) {
 	}
 	if _, err := m.Read(ctx, dirtyPath("vc")); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("marker not removed after rebuild")
+	}
+}
+
+// R3-1: a normal put updates the index incrementally; storage reads per put
+// must not grow with the number of records (no rebuild per write).
+func TestReadsPerPutConstant(t *testing.T) {
+	per := func(n int) int64 {
+		v, m := newVault(t)
+		for i := 0; i < n; i++ {
+			if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: fmt.Sprintf("k%03d", i), Title: "t"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m.Reads.Store(0)
+		if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "new", Title: "t"}); err != nil {
+			t.Fatal(err)
+		}
+		r := m.Reads.Load()
+		if _, err := m.Read(ctx, dirtyPath("vc")); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("n=%d: marker left after a clean put", n)
+		}
+		return r
+	}
+	r5, r50 := per(5), per(50)
+	t.Logf("reads per put: 5 records=%d, 50 records=%d", r5, r50)
+	if r5 != r50 || r50 > 6 {
+		t.Fatalf("reads per put not constant: 5 records=%d, 50 records=%d", r5, r50)
+	}
+}
+
+// R3-2: concurrent writers share the marker safely: it exists while any
+// write is in flight, is gone when all finish cleanly, and the index has
+// every record without a rebuild.
+func TestConcurrentWritersMarker(t *testing.T) {
+	v, m := newVault(t)
+	v.Put(ctx, "pm", PutInput{Project: "vc", Key: "seed", Title: "t"})
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: fmt.Sprintf("c%02d", i), Title: "t"}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if _, err := m.Read(ctx, dirtyPath("vc")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("marker left after concurrent clean writes")
+	}
+	idx, _, err := v.loadIndex(ctx, "vc", false)
+	if err != nil || len(idx.Entries) != 21 {
+		t.Fatalf("index has %d entries, err %v", len(idx.Entries), err)
+	}
+	// One writer's index failure: the marker must survive unless a later
+	// rebuild repaired the index, and a restart must see all records.
+	var fail atomic.Bool
+	fail.Store(true)
+	m.FailWrite = func(p string) error {
+		if strings.HasSuffix(p, "_index.json") && fail.CompareAndSwap(true, false) {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			v.Put(ctx, "pm", PutInput{Project: "vc", Key: fmt.Sprintf("d%02d", i), Title: "t"})
+		}(i)
+	}
+	wg.Wait()
+	m.FailWrite = nil
+	if _, err := m.Read(ctx, dirtyPath("vc")); err != nil && v.isDirty(ctx, "vc") {
+		t.Fatal("dirty but marker gone")
+	}
+	v2 := New(m, v.acl)
+	// Another writer may have rebuilt after the failure (then the marker is
+	// legitimately removed); either way a restart must see a complete index.
+	if idx, _, err := v2.loadIndex(ctx, "vc", false); err != nil || len(idx.Entries) != 31 || v2.isDirty(ctx, "vc") {
+		t.Fatalf("after restart: index %v, err %v", idx, err)
+	}
+}
+
+// R3-3: if the marker cannot be written the write fails closed.
+func TestMarkerWriteFailsClosed(t *testing.T) {
+	v, m := newVault(t)
+	if !FailClosedOnMarkerError {
+		t.Fatal("PM ruling: fail closed")
+	}
+	m.FailWrite = func(p string) error {
+		if strings.HasSuffix(p, "_index.dirty") {
+			return errors.New("drive down")
+		}
+		return nil
+	}
+	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "a", Title: "t"}); !errors.Is(err, ErrMarker) {
+		t.Fatalf("want ErrMarker, got %v", err)
+	}
+	if _, err := m.Read(ctx, recPath("vc", "a")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("record written despite marker failure")
+	}
+}
+
+// R3-4: the log line is appended even when the index update fails.
+func TestLogAppendedWhenIndexFails(t *testing.T) {
+	v, m := newVault(t)
+	m.FailWrite = func(p string) error {
+		if strings.HasSuffix(p, "_index.json") {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "a", Title: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	m.FailWrite = nil
+	b, err := m.Read(ctx, "projects/vc/log.jsonl")
+	if err != nil || !strings.Contains(string(b), `"key":"a"`) {
+		t.Fatalf("log not appended: %q %v", b, err)
+	}
+	if _, err := m.Read(ctx, dirtyPath("vc")); err != nil {
+		t.Fatal("marker not kept after index failure")
 	}
 }

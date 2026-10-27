@@ -27,6 +27,9 @@ var (
 	ErrInvalid   = errors.New("invalid argument")
 	// ErrCorrupt marks a stored record that exists but cannot be parsed.
 	ErrCorrupt = errors.New("corrupt record")
+	// ErrMarker: the durable index-dirty marker could not be written, so the
+	// write was refused (fail closed).
+	ErrMarker = errors.New("index dirty marker unavailable")
 )
 
 // Kinds is the closed set of record kinds (spec: strict kinds).
@@ -73,6 +76,8 @@ type Vault struct {
 	// dirty caches each project's index state ("dirty"/"clean"); the
 	// durable source is the projects/<p>/_index.dirty marker in storage.
 	dirty sync.Map // project -> bool (true = dirty)
+	// marks holds per-project durable-marker state (see marker.go).
+	marks sync.Map // project -> *markState
 }
 
 func New(b store.Backend, aclFn func() *acl.ACL) *Vault {
@@ -155,10 +160,14 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 			return err
 		}
 	}
-	// Mark the index dirty durably before the record commits, so a crash,
-	// deadline or failure anywhere between here and the index save leaves a
-	// marker that forces a rebuild on next access (survives restarts).
-	v.markDirty(ctx, project)
+	// Ensure the durable _index.dirty marker exists before the record
+	// commits, so a crash between the commit and the index save is detected
+	// at the next startup. Fails closed (see FailClosedOnMarkerError).
+	if err := v.beginWrite(ctx, project); err != nil {
+		return err
+	}
+	indexOK := true
+	defer func() { v.endWrite(ctx, project, indexOK) }()
 	next.ETag = fmt.Sprintf("%s:%d", next.Key, next.Version)
 	b, _ := json.MarshalIndent(next, "", "  ")
 	err := v.b.WriteIf(ctx, recPath(project, next.Key), b, rev)
@@ -170,7 +179,7 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	}
 	// Record is durable; index and log are derived. Don't fail the write
 	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
-	if err := v.afterWrite(ctx, op, project, next); err != nil {
+	if err := v.afterWrite(ctx, op, project, next, &indexOK); err != nil {
 		log.Printf("botvault: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
 	}
 	return nil

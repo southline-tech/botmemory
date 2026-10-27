@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/radiancelux/botvault/internal/drive"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -250,4 +251,38 @@ func TestToolCallDeadline(t *testing.T) {
 	if spy.left <= 0 || spy.left > CallTimeout {
 		t.Fatalf("backend ctx deadline left=%v, want (0, %v]", spy.left, CallTimeout)
 	}
+}
+
+// R2-4/PM round 3: a hung Drive cannot hold a tool call past CallTimeout.
+// The fake Drive never answers; the call must fail at the deadline.
+func TestToolCallDeadlineSlowDrive(t *testing.T) {
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); slow.Close() })
+	old := CallTimeout
+	CallTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { CallTimeout = old })
+
+	a, _ := acl.Parse([]byte(fmt.Sprintf(`{"bots":{"pm":{"token_sha256":%q,"roles":{"vc":"owner"}}}}`, acl.HashToken("pm-tok"))))
+	f := func() *acl.ACL { return a }
+	d := drive.New(slow.Client(), "root")
+	d.Base = slow.URL
+	s := httptest.NewServer(&Server{V: vault.New(d, f), ACL: f})
+	t.Cleanup(s.Close)
+
+	start := time.Now()
+	isErr, txt := call(t, s, "pm-tok", "put", map[string]any{"project": "vc", "key": "k", "title": "t"})
+	el := time.Since(start)
+	if !isErr {
+		t.Fatalf("put against hung Drive succeeded: %s", txt)
+	}
+	if el < CallTimeout || el > 5*time.Second {
+		t.Fatalf("call took %v, want about CallTimeout (%v)", el, CallTimeout)
+	}
+	t.Logf("hung Drive: tool call failed after %v: %s", el.Round(time.Millisecond), txt)
 }

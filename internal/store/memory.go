@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Memory is an in-process Backend for tests and local dev. Not durable.
@@ -19,6 +20,8 @@ type Memory struct {
 	// MaxRead, if > 0, makes reads of larger files fail with ErrTooLarge
 	// (mirrors the Drive backend's read cap).
 	MaxRead int
+	// Reads counts Read/ReadRev calls (for cost assertions in tests).
+	Reads atomic.Int64
 }
 
 type mfile struct {
@@ -34,6 +37,7 @@ func (m *Memory) Read(ctx context.Context, p string) ([]byte, error) {
 }
 
 func (m *Memory) ReadRev(_ context.Context, p string) ([]byte, string, error) {
+	m.Reads.Add(1)
 	if m.FailRead != nil {
 		if err := m.FailRead(clean(p)); err != nil {
 			return nil, "", err
