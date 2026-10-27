@@ -107,8 +107,9 @@ On real Drive, 2026-10-26: the three pilot bots (pm-verifychain owner,
 implementor-verifychain write, reviewer-verifychain write, on `verifychain`
 only) were granted and smoke-tested. Each token did put, get and search on
 verifychain and was denied on other projects. A throwaway bot, `qa-throwaway`,
-was granted, revoked, re-granted and revoked again, and then removed with
-`botvault acl remove`. `acl list` now shows exactly the three pilot bots, all
+was granted and revoked during QA, and is no longer in `_acl.json` (when
+`botvault acl remove qa-throwaway` ran it reported "no such bot", so the
+entry had already been removed). `acl list` now shows exactly the three pilot bots, all
 active.
 
 ## Server environment and restart (names only, never values)
