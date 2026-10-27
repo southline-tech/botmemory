@@ -32,3 +32,9 @@ for p in acl store vault mcp drive; do go test -count=1 -race ./internal/$p/; do
 
 ### Data migration note
 No real Drive data exists in any earlier layout (e.g. kind-scoped `records/<kind>/<key>.json`): no real Drive credential has ever been configured for botVault, so all testing has used the fake Drive and memory backends. No migration is needed.
+
+## M2
+- Tools: `search` (all terms, case-insensitive, over key/kind/title/tags/first 500 chars; `project:"*"` = every readable project; archived hidden unless `status:"archived"`; limit default 50, max 200), `history` (versions newest first; fetch one with `get` + `version`), `reindex` (owner).
+- Derived files per project: `_index.json` (per-key summary; rebuilt automatically if missing/corrupt) and `log.jsonl` (one line per put/append/delete). They are updated after the record commits; a failure there is logged, never fails the write, and `reindex` repairs the index.
+- Drive retries 429/5xx/transport errors: 5 attempts, exponential backoff (500ms base, 16s cap) with full jitter, honours `Retry-After`.
+- `botvault bootstrap`: with `BOTVAULT_DRIVE_ROOT_ID` unset, finds or creates `botVault` in My Drive (drive.file), seeds a deny-all `_acl.json`, and prints `BOTVAULT_DRIVE_ROOT_ID=<id>`. Idempotent.

@@ -75,7 +75,7 @@ func TestInitializeAndList(t *testing.T) {
 	for _, tl := range out["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "list_projects,list,get,put,append,delete" {
+	if strings.Join(names, ",") != "list_projects,list,get,put,append,search,history,reindex,delete" {
 		t.Fatal(names)
 	}
 	_, out = rpc(t, s, "pm-tok", "nope", nil)
@@ -191,5 +191,30 @@ func TestOriginCheck(t *testing.T) {
 		if code, _ := raw(t, s, h, okBody); code != want {
 			t.Errorf("origin %q: %d want %d", o, code, want)
 		}
+	}
+}
+
+func TestM2Tools(t *testing.T) {
+	s := newSrv(t)
+	if isErr, txt := call(t, s, "pm-tok", "put", map[string]any{"project": "vc", "key": "plan", "title": "Rollout plan", "body": "ship botvault"}); isErr {
+		t.Fatal(txt)
+	}
+	call(t, s, "impl-tok", "append", map[string]any{"project": "vc", "key": "plan", "text": "phase two"})
+	if isErr, txt := call(t, s, "impl-tok", "search", map[string]any{"project": "*", "query": "rollout botvault"}); isErr || !strings.Contains(txt, `"key": "plan"`) && !strings.Contains(txt, `"key":"plan"`) {
+		t.Fatalf("search: %s", txt)
+	}
+	isErr, txt := call(t, s, "impl-tok", "history", map[string]any{"project": "vc", "key": "plan"})
+	var h []map[string]any
+	if isErr || json.Unmarshal([]byte(txt), &h) != nil || len(h) != 2 || h[1]["updated_by"] != "pm" {
+		t.Fatalf("history: %s", txt)
+	}
+	if isErr, txt := call(t, s, "impl-tok", "get", map[string]any{"project": "vc", "key": "plan", "version": 1}); isErr || strings.Contains(txt, "phase two") {
+		t.Fatalf("get v1: %s", txt)
+	}
+	if isErr, txt := call(t, s, "impl-tok", "reindex", map[string]any{"project": "vc"}); !isErr || !strings.Contains(txt, "FORBIDDEN") {
+		t.Fatalf("non-owner reindex: %s", txt)
+	}
+	if isErr, txt := call(t, s, "pm-tok", "reindex", map[string]any{"project": "vc"}); isErr || !strings.Contains(txt, "1") {
+		t.Fatalf("reindex: %s", txt)
 	}
 }

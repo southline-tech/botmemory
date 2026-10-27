@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/radiancelux/botvault/internal/store"
 )
@@ -24,6 +25,8 @@ type fakeDrive struct {
 	mu    sync.Mutex
 	n     int
 	files map[string]*ffile
+	fail  []int // status codes returned (in order) before serving normally
+	hits  int
 }
 type ffile struct {
 	id, name, mime, parent string
@@ -36,6 +39,16 @@ var qRE = regexp.MustCompile(`^'([^']+)' in parents(?: and name = '((?:[^'\\]|\\
 func (f *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.hits++
+	if len(f.fail) > 0 {
+		code := f.fail[0]
+		f.fail = f.fail[1:]
+		if code == 429 {
+			w.Header().Set("Retry-After", "0")
+		}
+		http.Error(w, "transient", code)
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer test" {
 		http.Error(w, "noauth", 401)
 		return
@@ -172,6 +185,7 @@ func newFake(t *testing.T) (*fakeDrive, func() *Backend) {
 	return fd, func() *Backend {
 		b := New(&http.Client{Transport: authRT{}}, "ROOT")
 		b.Base = srv.URL
+		b.Retry = fastRetry(nil)
 		return b
 	}
 }
@@ -245,8 +259,104 @@ func TestDriveErrorSanitized(t *testing.T) {
 	defer srv.Close()
 	b := New(srv.Client(), "ROOT")
 	b.Base = srv.URL
+	b.Retry = fastRetry(nil)
 	_, err := b.Read(context.Background(), "x/y.json")
 	if err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "/drive/") || err.Error() != "drive: upstream error (HTTP 403)" {
 		t.Fatalf("leaky error: %v", err)
+	}
+}
+
+func fastRetry(slept *[]time.Duration) Retry {
+	return Retry{MaxAttempts: 4, Base: 100 * time.Millisecond, Max: time.Second,
+		Jitter: func() float64 { return 0.5 },
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			if slept != nil {
+				*slept = append(*slept, d)
+			}
+			return ctx.Err()
+		}}
+}
+
+func TestRetryTransient(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	var slept []time.Duration
+	b.Retry = fastRetry(&slept)
+	ctx := context.Background()
+	// 503,500 on a write (multipart body must be re-sent intact), then success.
+	fd.fail = []int{503, 500}
+	if err := b.Write(ctx, "a/b.json", []byte(`{"x":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := b.Read(ctx, "a/b.json"); err != nil || string(got) != `{"x":1}` {
+		t.Fatalf("body not re-sent: %q %v", got, err)
+	}
+	// Exponential with jitter 0.5: 50ms, 100ms.
+	if !reflect.DeepEqual(slept, []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}) {
+		t.Fatalf("backoff %v", slept)
+	}
+	// 429 honours Retry-After: 0.
+	slept = nil
+	fd.fail = []int{429}
+	if _, err := b.Read(ctx, "a/b.json"); err != nil || len(slept) != 1 || slept[0] != 0 {
+		t.Fatalf("429: %v %v", slept, err)
+	}
+}
+
+func TestRetryBoundedAndNonRetryable(t *testing.T) {
+	fd, mk := newFake(t)
+	b := mk()
+	ctx := context.Background()
+	b.Write(ctx, "a.json", []byte("1"))
+	fd.hits = 0
+	fd.fail = []int{500, 500, 500, 500, 500, 500}
+	if _, err := b.Read(ctx, "a.json"); err == nil || err.Error() != "drive: upstream error (HTTP 500)" {
+		t.Fatalf("want sanitized 500 after bounded retries, got %v", err)
+	}
+	if fd.hits != 4 {
+		t.Fatalf("attempts = %d, want 4", fd.hits)
+	}
+	fd.fail, fd.hits = []int{403}, 0
+	if _, err := b.Read(ctx, "a.json"); err == nil || fd.hits != 1 {
+		t.Fatalf("403 retried: hits=%d err=%v", fd.hits, err)
+	}
+}
+
+func TestRetryDelayCap(t *testing.T) {
+	r := Retry{Base: time.Second, Max: 4 * time.Second, Jitter: func() float64 { return 0.999 }}
+	if d := r.delay(10, nil); d > 4*time.Second {
+		t.Fatalf("uncapped %v", d)
+	}
+	resp := &http.Response{Header: http.Header{"Retry-After": {"3600"}}}
+	if d := r.delay(0, resp); d != 4*time.Second {
+		t.Fatalf("Retry-After not capped %v", d)
+	}
+}
+
+func TestBootstrap(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	id, seeded, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil || id == "" || !seeded {
+		t.Fatalf("bootstrap: %q %v %v", id, seeded, err)
+	}
+	if fd.files[id].parent != "root" || fd.files[id].name != RootFolderName || fd.files[id].mime != folderMime {
+		t.Fatalf("root folder %+v", fd.files[id])
+	}
+	b := New(hc, id)
+	b.Base = srv.URL
+	if got, _ := b.Read(ctx, "_acl.json"); strings.TrimSpace(string(got)) != `{"bots":{}}` {
+		t.Fatalf("acl seed %q", got)
+	}
+	b.Write(ctx, "_acl.json", []byte(`{"bots":{"x":{}}}`))
+	id2, seeded2, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil || id2 != id || seeded2 {
+		t.Fatalf("not idempotent: %q %v %v", id2, seeded2, err)
+	}
+	if got, _ := b.Read(ctx, "_acl.json"); string(got) != `{"bots":{"x":{}}}` {
+		t.Fatal("bootstrap overwrote existing ACL")
 	}
 }

@@ -27,6 +27,7 @@ type Backend struct {
 	HC     *http.Client // must add auth (e.g. oauth2.NewClient)
 	RootID string
 	Base   string // default https://www.googleapis.com; overridable for tests
+	Retry  Retry  // zero value = DefaultRetry()
 
 	mu      sync.Mutex        // guards folders
 	folders map[string]string // vault dir path -> folder id
@@ -50,7 +51,7 @@ type file struct {
 func q(s string) string { return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) }
 
 func (d *Backend) do(req *http.Request, out any) error {
-	resp, err := d.HC.Do(req)
+	resp, err := d.send(req)
 	if err != nil {
 		return err
 	}
@@ -184,11 +185,14 @@ func (d *Backend) ReadRev(ctx context.Context, p string) ([]byte, string, error)
 
 func (d *Backend) download(ctx context.Context, id string) ([]byte, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", d.Base+"/drive/v3/files/"+url.PathEscape(id)+"?alt=media&supportsAllDrives=true", nil)
-	resp, err := d.HC.Do(req)
+	resp, err := d.send(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, store.ErrNotFound
+	}
 	if resp.StatusCode/100 != 2 {
 		log.Printf("drive: download %s: %d", id, resp.StatusCode)
 		return nil, fmt.Errorf("drive: upstream error (HTTP %d)", resp.StatusCode)

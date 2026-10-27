@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path"
 	"regexp"
 	"sort"
@@ -66,7 +67,7 @@ type Vault struct {
 	b     store.Backend
 	acl   func() *acl.ACL
 	now   func() time.Time
-	locks sync.Map // record path -> *sync.Mutex
+	locks sync.Map // record path or "proj:<p>" -> *sync.Mutex
 }
 
 func New(b store.Backend, aclFn func() *acl.ACL) *Vault {
@@ -140,7 +141,7 @@ func (v *Vault) load(ctx context.Context, p string) (*Record, error) {
 // is the commit point; a concurrent writer (another process) fails it with
 // ErrPrecondition -> CONFLICT, in addition to the in-process key lock and the
 // single-instance lock file.
-func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) error {
+func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, project string) error {
 	rev := ""
 	if prev != nil {
 		rev = prev.rev
@@ -155,7 +156,15 @@ func (v *Vault) commit(ctx context.Context, prev, next *Record, project string) 
 	if errors.Is(err, store.ErrPrecondition) {
 		return fmt.Errorf("%w: %s changed in storage since it was read; re-get and retry", ErrConflict, next.Key)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// Record is durable; index and log are derived. Don't fail the write
+	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
+	if err := v.afterWrite(ctx, op, project, next); err != nil {
+		log.Printf("botvault: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
+	}
+	return nil
 }
 
 func (v *Vault) ListProjects(ctx context.Context, bot string) ([]string, error) {
@@ -285,7 +294,7 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 			next.Kind = prev.Kind
 		}
 	}
-	if err := v.commit(ctx, prev, next, in.Project); err != nil {
+	if err := v.commit(ctx, "put", prev, next, in.Project); err != nil {
 		return nil, err
 	}
 	return next, nil
@@ -318,10 +327,11 @@ func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Re
 	if next.Body != "" && !strings.HasSuffix(next.Body, "\n") {
 		sep = "\n"
 	}
+	op := "append"
 	next.Body += sep + fmt.Sprintf("\n— %s, %s\n%s\n", bot, now.Format(time.RFC3339), text)
 	next.Version++
 	next.UpdatedBy, next.UpdatedAt = bot, now
-	if err := v.commit(ctx, prev, &next, project); err != nil {
+	if err := v.commit(ctx, op, prev, &next, project); err != nil {
 		return nil, err
 	}
 	return &next, nil
@@ -352,7 +362,7 @@ func (v *Vault) Delete(ctx context.Context, bot, project, key string, ifVersion 
 	next.Status = StatusArchived
 	next.Version++
 	next.UpdatedBy, next.UpdatedAt = bot, v.now()
-	if err := v.commit(ctx, prev, &next, project); err != nil {
+	if err := v.commit(ctx, "delete", prev, &next, project); err != nil {
 		return nil, err
 	}
 	return &next, nil
