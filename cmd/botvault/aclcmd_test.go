@@ -40,6 +40,15 @@ func TestACLCommandMemory(t *testing.T) {
 			t.Fatalf("list output missing %q:\n%s", want, s)
 		}
 	}
+	if err := runACL(ctx, m, []string{"revoke", "pm-verifychain"}, &out); err == nil || !strings.Contains(err.Error(), "last active owner") {
+		t.Fatalf("sole owner revoked without --force: %v", err)
+	}
+	if err := runACL(ctx, m, []string{"revoke", "pm-verifychain", "--force"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := runACL(ctx, m, []string{"grant", "x", "p", "read", "--force", "--token-out", filepath.Join(dir, "x")}, &out); err == nil {
+		t.Fatal("--force accepted on grant")
+	}
 	if err := runACL(ctx, m, []string{"grant", "x", "p", "read"}, &out); err == nil {
 		t.Fatal("grant without --token-out accepted")
 	}

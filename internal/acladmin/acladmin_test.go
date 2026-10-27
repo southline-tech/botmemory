@@ -72,7 +72,10 @@ func TestGrantRevokeList(t *testing.T) {
 		t.Fatal("token changed on role grant")
 	}
 
-	if err := a.Revoke(ctx, "pm-verifychain"); err != nil {
+	if err := a.Revoke(ctx, "pm-verifychain", false); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("revoke of sole owner without force: %v", err)
+	}
+	if err := a.Revoke(ctx, "pm-verifychain", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := load(t, m).Authenticate(tok); err == nil {
@@ -100,7 +103,7 @@ func TestGrantRevokeList(t *testing.T) {
 	if strings.Contains(fmt.Sprintf("%+v", es), acl.HashToken(readTok(t, tok2p))) {
 		t.Fatal("list exposes a hash")
 	}
-	if err := a.Revoke(ctx, "nobody"); !errors.Is(err, ErrNoBot) {
+	if err := a.Revoke(ctx, "nobody", false); !errors.Is(err, ErrNoBot) {
 		t.Fatalf("revoke unknown: %v", err)
 	}
 }
@@ -156,7 +159,7 @@ func TestConcurrentEditRetried(t *testing.T) {
 	a.beforeWrite = func() {
 		if !once {
 			once = true
-			if err := other.Revoke(ctx, "other"); err != nil {
+			if err := other.Revoke(ctx, "other", false); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -187,5 +190,175 @@ func TestPersistentConflictRemovesTokenFile(t *testing.T) {
 	}
 	if _, err := os.Stat(tp); !os.IsNotExist(err) {
 		t.Fatal("token file left after failed grant")
+	}
+}
+
+// saveThenFail applies WriteIf to the inner store and then reports an error,
+// like a Drive upload whose response was lost. readFails makes later reads
+// fail too.
+type saveThenFail struct {
+	store.Backend
+	failWrites bool
+	readFails  bool // reads fail once a write has been attempted
+	wrote      bool
+}
+
+func (s *saveThenFail) WriteIf(ctx context.Context, p string, d []byte, rev string) error {
+	if !s.failWrites {
+		return s.Backend.WriteIf(ctx, p, d, rev)
+	}
+	s.wrote = true
+	if err := s.Backend.WriteIf(ctx, p, d, rev); err != nil {
+		return err
+	}
+	return errors.New("connection reset (response lost)")
+}
+
+func (s *saveThenFail) Read(ctx context.Context, p string) ([]byte, error) {
+	if s.readFails && s.wrote {
+		return nil, errors.New("drive: upstream error (HTTP 503)")
+	}
+	return s.Backend.Read(ctx, p)
+}
+
+// failNoSave reports an error without saving anything.
+type failNoSave struct{ store.Backend }
+
+func (failNoSave) WriteIf(context.Context, string, []byte, string) error {
+	return errors.New("connection reset before upload")
+}
+
+// R1-1: a write that landed despite an error keeps the token file and succeeds.
+func TestGrantSavedThenErrorKeepsToken(t *testing.T) {
+	for _, rotate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rotate=%v", rotate), func(t *testing.T) {
+			m := store.NewMemory()
+			dir := t.TempDir()
+			if rotate {
+				if _, err := New(m).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: filepath.Join(dir, "old")}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tp := filepath.Join(dir, "b.token")
+			r, err := New(&saveThenFail{Backend: m, failWrites: true}).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: tp, Rotate: rotate})
+			if err != nil || !r.Minted {
+				t.Fatalf("grant: %+v %v", r, err)
+			}
+			if id, err := load(t, m).Authenticate(readTok(t, tp)); err != nil || id != "b" {
+				t.Fatalf("saved token does not authenticate: %q %v", id, err)
+			}
+		})
+	}
+}
+
+// R1-1: write failed and the hash is absent => file removed; re-read fails => kept, outcome unknown.
+func TestGrantWriteErrorOutcomes(t *testing.T) {
+	for _, rotate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rotate=%v", rotate), func(t *testing.T) {
+			m := store.NewMemory()
+			dir := t.TempDir()
+			if rotate {
+				if _, err := New(m).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: filepath.Join(dir, "old")}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tp := filepath.Join(dir, "absent.token")
+			if _, err := New(failNoSave{m}).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: tp, Rotate: rotate}); err == nil || errors.Is(err, ErrOutcomeUnknown) {
+				t.Fatalf("want plain write error, got %v", err)
+			}
+			if _, err := os.Stat(tp); !os.IsNotExist(err) {
+				t.Fatal("token file kept although the hash is absent")
+			}
+			up := filepath.Join(dir, "unknown.token")
+			_, err := New(&saveThenFail{Backend: m, failWrites: true, readFails: true}).Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: up, Rotate: rotate})
+			if !errors.Is(err, ErrOutcomeUnknown) || !strings.Contains(err.Error(), up) {
+				t.Fatalf("want ErrOutcomeUnknown naming the file, got %v", err)
+			}
+			readTok(t, up) // kept, still 0600
+			if id, _ := load(t, m).Authenticate(readTok(t, up)); id != "b" {
+				t.Fatal("expected the write to have landed in this scenario")
+			}
+		})
+	}
+}
+
+// R1-3: a bot created concurrently (without --rotate) fails the grant; nothing is overwritten.
+func TestGrantBotAppearsConcurrently(t *testing.T) {
+	m := store.NewMemory()
+	dir := t.TempDir()
+	a, other := New(m), New(m)
+	otherTok := filepath.Join(dir, "other.token")
+	a.beforeWrite = func() {
+		a.beforeWrite = nil
+		if _, err := other.Grant(ctx, "b", "p", "read", GrantOpts{TokenOut: otherTok}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tp := filepath.Join(dir, "b.token")
+	if _, err := a.Grant(ctx, "b", "p", "write", GrantOpts{TokenOut: tp}); err == nil || !strings.Contains(err.Error(), "concurrently") {
+		t.Fatalf("want concurrent-creation error, got %v", err)
+	}
+	if _, err := os.Stat(tp); !os.IsNotExist(err) {
+		t.Fatal("token file left after refused grant")
+	}
+	l := load(t, m)
+	if id, _ := l.Authenticate(readTok(t, otherTok)); id != "b" || l.RoleFor("b", "p") != acl.Read {
+		t.Fatal("concurrent creator's grant was overwritten")
+	}
+}
+
+// R1-2: last active owner of any project is protected; another active owner lifts it.
+func TestRevokeLastOwner(t *testing.T) {
+	m := store.NewMemory()
+	a := New(m)
+	dir := t.TempDir()
+	g := func(bot, p, r string) {
+		t.Helper()
+		if _, err := a.Grant(ctx, bot, p, r, GrantOpts{TokenOut: filepath.Join(dir, bot+p)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g("pm", "p1", "owner")
+	g("pm", "p2", "owner")
+	g("pm2", "p1", "owner")
+	g("dev", "p1", "write")
+	if err := a.Revoke(ctx, "pm", false); !errors.Is(err, ErrLastOwner) || !strings.Contains(err.Error(), "p2") || strings.Contains(err.Error(), "p1") {
+		t.Fatalf("want last-owner refusal naming p2 only, got %v", err)
+	}
+	if err := a.Revoke(ctx, "dev", false); err != nil {
+		t.Fatalf("non-owner revoke: %v", err)
+	}
+	g("pm2", "p2", "owner")
+	if err := a.Revoke(ctx, "pm", false); err != nil {
+		t.Fatalf("revoke with co-owners: %v", err)
+	}
+	// pm is revoked, so pm2 is now last owner of both; a revoked co-owner does not count.
+	if err := a.Revoke(ctx, "pm2", false); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("revoked co-owner counted: %v", err)
+	}
+	if err := a.Revoke(ctx, "pm2", true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R1-4: an fsync failure removes the partial file; success leaves 0600 content.
+func TestWriteSecretFileCleanup(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bad")
+	syncFile = func(*os.File) error { return errors.New("EIO") }
+	err := writeSecretFile(p, "tok\n")
+	syncFile = (*os.File).Sync
+	if err == nil {
+		t.Fatal("sync failure not reported")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("partial token file left after sync failure")
+	}
+	ok := filepath.Join(dir, "ok")
+	if err := writeSecretFile(ok, "tok\n"); err != nil {
+		t.Fatal(err)
+	}
+	if readTok(t, ok) != "tok" {
+		t.Fatal("content")
 	}
 }

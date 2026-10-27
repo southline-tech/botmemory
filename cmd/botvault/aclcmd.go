@@ -15,20 +15,24 @@ import (
 
 const aclUsage = `usage:
   botvault acl grant <bot> <project> <role> --token-out FILE [--rotate]
-  botvault acl revoke <bot>
+  botvault acl revoke <bot> [--force]
   botvault acl list
 roles: read | write | owner. A new bot (or --rotate) gets a fresh token written
-ONLY to FILE (mode 0600, must not exist); only its hash goes into _acl.json.`
+ONLY to FILE (mode 0600, must not exist); only its hash goes into _acl.json.
+revoke disables the bot's token for EVERY project; it refuses to remove the
+last active owner of any project unless --force.`
 
 // runACL implements `botvault acl ...` against b. It never prints a token
 // or a hash.
 func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) error {
 	var pos []string
-	tokenOut, rotate := "", false
+	tokenOut, rotate, force := "", false, false
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--rotate":
 			rotate = true
+		case a == "--force":
+			force = true
 		case a == "--token-out":
 			if i+1 >= len(args) {
 				return errors.New("--token-out needs a file path")
@@ -49,6 +53,9 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 	ad := acladmin.New(b)
 	switch pos[0] {
 	case "grant":
+		if force {
+			return errors.New("--force applies only to revoke")
+		}
 		if len(pos) != 4 {
 			return errors.New(aclUsage)
 		}
@@ -63,13 +70,16 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 		}
 		fmt.Fprintln(out, "the server picks this up at its next ACL reload (within 60s)")
 	case "revoke":
+		if rotate || tokenOut != "" {
+			return errors.New("revoke takes only --force")
+		}
 		if len(pos) != 2 {
 			return errors.New(aclUsage)
 		}
-		if err := ad.Revoke(ctx, pos[1]); err != nil {
+		if err := ad.Revoke(ctx, pos[1], force); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "revoked %s; its token stops working at the next ACL reload (within 60s)\n", pos[1])
+		fmt.Fprintf(out, "revoked %s for all projects; its token stops working at the next ACL reload (within 60s)\n", pos[1])
 	case "list":
 		if len(pos) != 1 {
 			return errors.New(aclUsage)

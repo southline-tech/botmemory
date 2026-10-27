@@ -31,7 +31,7 @@ func TestACLAdminOnDrive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := acladmin.New(nb()).Revoke(ctx, "reviewer-verifychain"); err != nil {
+	if err := acladmin.New(nb()).Revoke(ctx, "reviewer-verifychain", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.WriteIf(ctx, acladmin.Path, data, rev); err == nil {

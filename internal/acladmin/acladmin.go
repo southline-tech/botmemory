@@ -31,7 +31,21 @@ var (
 	ErrNoBot     = errors.New("acladmin: no such bot")
 	ErrTokenOut  = errors.New("acladmin: --token-out is required when a token is minted")
 	ErrConflicts = errors.New("acladmin: _acl.json kept changing underneath us; retry")
+	// ErrLastOwner: revoking would leave a project with no active owner.
+	ErrLastOwner = errors.New("acladmin: refusing to revoke the last active owner")
+	// ErrOutcomeUnknown: the ACL write failed in a way that may or may not have
+	// been applied and the ACL could not be re-read to tell. The token file
+	// is kept.
+	ErrOutcomeUnknown = errors.New("acladmin: ACL write outcome unknown")
 )
+
+// writeUnknownError wraps a WriteIf failure other than ErrPrecondition: the
+// backend (e.g. Drive after a lost response) may have saved the document.
+// Every other error from update means nothing was written.
+type writeUnknownError struct{ err error }
+
+func (e *writeUnknownError) Error() string { return "acladmin: write " + Path + ": " + e.err.Error() }
+func (e *writeUnknownError) Unwrap() error { return e.err }
 
 // Admin edits the ACL stored at Path in B.
 type Admin struct {
@@ -77,7 +91,10 @@ func (a *Admin) update(ctx context.Context, fn func(*acl.Doc) error) error {
 		if errors.Is(err, store.ErrPrecondition) {
 			continue
 		}
-		return err
+		if err != nil {
+			return &writeUnknownError{err}
+		}
+		return nil
 	}
 	return ErrConflicts
 }
@@ -97,9 +114,18 @@ type GrantResult struct {
 }
 
 // Grant gives bot role on project. A new bot (or Rotate) gets a fresh token,
-// written to opts.TokenOut before the ACL changes; if the ACL write fails the
-// token file is removed. An existing bot keeps its token. A revoked bot needs
-// Rotate (its old token must never come back).
+// written to opts.TokenOut before the ACL changes. An existing bot keeps its
+// token. A revoked bot needs Rotate (its old token must never come back).
+//
+// Whether to mint is decided from a first read (the token file must exist
+// before the ACL can reference its hash) and re-checked inside the edit: a
+// bot that appears concurrently without Rotate, or disappears/gets revoked
+// concurrently, fails the grant rather than silently changing its token.
+//
+// Token file on failure: removed when nothing can have been written
+// (validation, edit refusal, conflicts). If the write itself failed (it may
+// have landed), the ACL is re-read: hash present => success, file kept; hash
+// absent => file removed; re-read fails => file kept, ErrOutcomeUnknown.
 func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts GrantOpts) (GrantResult, error) {
 	if _, err := acl.ParseRole(role); err != nil {
 		return GrantResult{}, err
@@ -140,6 +166,8 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 	err = a.update(ctx, func(d *acl.Doc) error {
 		b, ok := d.Bots[bot]
 		switch {
+		case mint && ok && !opts.Rotate:
+			return fmt.Errorf("acladmin: bot %q was created concurrently; re-run (add --rotate to replace its token)", bot)
 		case mint:
 			b.TokenSHA256, b.Revoked = hash, false
 		case !ok:
@@ -154,22 +182,76 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 		d.Bots[bot] = b
 		return nil
 	})
-	if err != nil {
-		if mint {
-			os.Remove(opts.TokenOut)
-		}
+	if err == nil {
+		return GrantResult{Minted: mint}, nil
+	}
+	if !mint {
 		return GrantResult{}, err
 	}
-	return GrantResult{Minted: mint}, nil
+	var wu *writeUnknownError
+	if !errors.As(err, &wu) {
+		os.Remove(opts.TokenOut) // nothing was written
+		return GrantResult{}, err
+	}
+	switch landed, rerr := a.hashPresent(ctx, bot, hash); {
+	case rerr != nil:
+		return GrantResult{}, fmt.Errorf("%w: write failed (%v) and re-read failed (%v); token file kept at %s — run `botvault acl list`, and if %s is not granted delete the file", ErrOutcomeUnknown, wu.err, rerr, opts.TokenOut, bot)
+	case landed:
+		return GrantResult{Minted: true}, nil // the write was applied despite the error
+	default:
+		os.Remove(opts.TokenOut)
+		return GrantResult{}, err
+	}
 }
 
-// Revoke marks bot revoked (its token stops authenticating at the server's
-// next ACL reload, within 60s). Roles are kept for the record.
-func (a *Admin) Revoke(ctx context.Context, bot string) error {
+// hashPresent re-reads the ACL and reports whether bot now carries hash.
+func (a *Admin) hashPresent(ctx context.Context, bot, hash string) (bool, error) {
+	data, err := a.B.Read(ctx, Path)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil // no ACL at all: our write certainly did not land
+	}
+	if err != nil {
+		return false, err
+	}
+	var d acl.Doc
+	if err := json.Unmarshal(data, &d); err != nil {
+		return false, err
+	}
+	b, ok := d.Bots[bot]
+	return ok && b.TokenSHA256 == hash, nil
+}
+
+// Revoke marks bot revoked as a whole: its single token stops authenticating
+// for EVERY project at the server's next ACL reload (within 60s). Roles are
+// kept for the record. Without force it refuses if bot is the last active
+// owner of any project (which would leave that project unadministrable).
+func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
 	return a.update(ctx, func(d *acl.Doc) error {
 		b, ok := d.Bots[bot]
 		if !ok {
 			return fmt.Errorf("%w: %q", ErrNoBot, bot)
+		}
+		if !force && !b.Revoked {
+			var orphaned []string
+			for p, r := range b.Roles {
+				if r != "owner" {
+					continue
+				}
+				other := false
+				for id, ob := range d.Bots {
+					if id != bot && !ob.Revoked && ob.Roles[p] == "owner" {
+						other = true
+						break
+					}
+				}
+				if !other {
+					orphaned = append(orphaned, p)
+				}
+			}
+			if len(orphaned) > 0 {
+				sort.Strings(orphaned)
+				return fmt.Errorf("%w of %v (%q); grant another owner first or use --force", ErrLastOwner, orphaned, bot)
+			}
 		}
 		b.Revoked = true
 		d.Bots[bot] = b
@@ -204,17 +286,29 @@ func (a *Admin) List(ctx context.Context) ([]Entry, error) {
 	return out, nil
 }
 
-// writeSecretFile creates path exclusively with mode 0600 (never follows a
-// symlink, never overwrites) and writes s.
+// writeSecretFile creates path exclusively with mode 0600 (never
+// overwrites), writes s and fsyncs it; on any failure the partial file is
+// removed. O_NOFOLLOW only protects the LAST path component: symlinked parent
+// directories are followed, so put token files in a directory you own (the
+// pilot script uses a 0700 per-bot directory).
+// syncFile is replaceable in tests to simulate an fsync failure.
+var syncFile = (*os.File).Sync
+
 func writeSecretFile(path, s string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return fmt.Errorf("acladmin: token file: %w", err)
 	}
-	if _, err := f.WriteString(s); err != nil {
-		f.Close()
-		os.Remove(path)
-		return err
+	_, err = f.WriteString(s)
+	if err == nil {
+		err = syncFile(f)
 	}
-	return f.Close()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+		return fmt.Errorf("acladmin: token file: %w", err)
+	}
+	return nil
 }

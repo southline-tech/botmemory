@@ -38,6 +38,13 @@ if have_go; then
 	say "go: $(go env GOVERSION) (need >= go$WANT_GO) ok"
 else
 	say "go: installing go$WANT_GO into $GO_DIR"
+	# Guard the rm -rf: never an empty path, /, $HOME, or a non-absolute path.
+	[[ "$GO_DIR" == /* ]] || { say "go: GO_INSTALL_DIR must be an absolute path"; exit 1; }
+	go_dir_real=$(realpath -m -- "$GO_DIR")
+	case "$go_dir_real" in
+	"" | / | "$(realpath -m -- "$HOME")" | /usr | /usr/local | /home)
+		say "go: refusing to replace GO_INSTALL_DIR=$GO_DIR"; exit 1 ;;
+	esac
 	arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
 	file="go$WANT_GO.linux-$arch.tar.gz"
 	sum=$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' |
@@ -45,8 +52,8 @@ else
 	tmp=$(mktemp -d "$REPO/.go-dl.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
 	curl -fsSL -o "$tmp/$file" "https://go.dev/dl/$file"
 	echo "$sum  $tmp/$file" | sha256sum -c --quiet -
-	rm -rf "$GO_DIR"; mkdir -p "$(dirname "$GO_DIR")"
-	tar -C "$tmp" -xzf "$tmp/$file" && mv "$tmp/go" "$GO_DIR"
+	rm -rf -- "$go_dir_real"; mkdir -p "$(dirname "$go_dir_real")"
+	tar -C "$tmp" -xzf "$tmp/$file" && mv "$tmp/go" "$go_dir_real"
 	export PATH="$GO_DIR/bin:$PATH"
 	have_go || { say "go: install failed"; exit 1; }
 	say "go: $(go env GOVERSION) installed; add $GO_DIR/bin to PATH in your shell profile"
@@ -66,7 +73,9 @@ fi
 # 4. Env: load a gitignored .env if present (refuse if group/world-readable).
 if [[ -f .env ]]; then
 	perm=$(stat -c %a .env)
-	if [[ "$perm" != 600 && "$perm" != 400 ]]; then
+	if [[ -L .env || "$(stat -c %u .env)" != "$(id -u)" ]]; then
+		say ".env: not a regular file owned by you; refusing to load it"; fail=1
+	elif [[ "$perm" != 600 && "$perm" != 400 ]]; then
 		say ".env: mode $perm; run: chmod 600 .env"; fail=1
 	else
 		set -a; . ./.env; set +a; say ".env: loaded (mode $perm)"

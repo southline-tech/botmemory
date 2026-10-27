@@ -59,16 +59,20 @@ Edits `_acl.json` in the configured backend (same env as `serve`). Every edit is
 
 ```sh
 botvault acl grant <bot> <project> <role> --token-out FILE [--rotate]   # role: read|write|owner
-botvault acl revoke <bot>
+botvault acl revoke <bot> [--force]                                    # whole bot, every project
 botvault acl list                                                       # bots, roles, active/REVOKED; never hashes
 ```
 - A new bot (or `--rotate`) gets a fresh token. Only its SHA-256 goes into `_acl.json`, and the raw token is written only to `FILE`, which is created with mode 0600 and must not already exist (symlinks are refused). The CLI never prints the token. If the ACL write fails, `FILE` is removed.
-- Granting to an existing bot adds or changes the role and keeps its token. A revoked bot can only be re-enabled with `--rotate`. `revoke` keeps roles.
+- If the ACL write itself fails (Drive may have saved it anyway), grant re-reads the ACL. If the new hash is there, the grant succeeded. If it isn't, the token file is removed. If the re-read fails, the file is kept and grant reports the outcome as unknown, giving the file path. Errors where nothing can have been written (validation, refusals, persistent conflicts) always remove the file.
+- Token files are fsynced. A failed write or close removes the partial file. `O_NOFOLLOW` covers only the last path component, so keep token files in a directory you own.
+- The mint decision is re-checked inside the conditional edit: a bot created concurrently without `--rotate` fails the grant.
+- Granting to an existing bot adds or changes the role and keeps its token. A revoked bot can only be re-enabled with `--rotate`.
+- `revoke` disables the bot's token for **every** project and keeps its roles. It refuses to revoke the last active owner of any project unless `--force` is given.
 - No wildcard projects. `serve` picks changes up within 60s.
 - With `BOTVAULT_BACKEND=memory` the CLI edits the CLI process's own memory, which is only useful in tests. With `BOTVAULT_ACL_FILE` set, it refuses (edit that local file by hand).
 
 ### Rebuilding after a box wipe
-`scripts/setup_box.sh [--test]` installs the Go version from `go.mod` if missing (sha256 checked against go.dev), builds `~/.local/bin/botvault`, and optionally runs every package's tests one at a time. It loads a mode-600 `.env` if present and reports the required env vars **by name only** (set/MISSING). It also checks the Drive root id against `~/.config/botvault/drive_root_id`, writing that file from `BOTVAULT_DRIVE_ROOT_ID` if missing and refusing if they differ. The script contains no secrets: restore `.env` and the OAuth refresh token yourself.
+`scripts/setup_box.sh [--test]` installs the Go version from `go.mod` if missing (sha256 checked against go.dev), builds `~/.local/bin/botvault`, and optionally runs every package's tests one at a time. It loads `.env` only if it is a regular file owned by you with mode 600 or 400 and reports the required env vars **by name only** (set/MISSING). It also checks the Drive root id against `~/.config/botvault/drive_root_id`, writing that file from `BOTVAULT_DRIVE_ROOT_ID` if missing and refusing if they differ. The script contains no secrets: restore `.env` and the OAuth refresh token yourself.
 
 ### Hardening
 - The lock file is opened with `O_NOFOLLOW`, so a symlink planted at the (world-writable `/var/tmp`) lock path is refused.

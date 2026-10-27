@@ -26,7 +26,13 @@ BOTVAULT_PILOT_ALLOW_DRIVE=1 scripts/pilot_verifychain.sh --apply
 Each grant mints a fresh token and writes **only its SHA-256 hash** into
 `_acl.json` (conditional on the Drive file version, retried on a concurrent
 edit). It writes the raw token to `~/.config/botvault/pilot/<bot>/botvault.token`
-with mode 0600. That file must not already exist, and a symlink there is refused.
+with mode 0600. That file must not already exist, and a symlink there is refused. `O_NOFOLLOW`
+only checks the final path component, so the script creates each per-bot
+directory with mode 0700 under your own config dir. If the ACL write fails
+after the token file was written, the CLI re-reads the ACL. If the new hash is
+there, the grant succeeded. If it isn't, the file is removed. If the ACL can't
+be read, the file is kept and the CLI reports the outcome as unknown, giving the
+file path. In that case, check `botvault acl list` before you use or delete the file.
 The CLI prints the path and never the token. `serve` picks the grant up
 within 60s.
 
@@ -77,6 +83,11 @@ botvault acl revoke reviewer-verifychain             # stops working within 60s
 botvault acl grant reviewer-verifychain verifychain write --rotate \
   --token-out ~/.config/botvault/pilot/reviewer-verifychain/botvault.token.new
 ```
+
+`revoke` applies to the **bot as a whole**: it has one token, so revoking
+disables it for every project it holds, not just `verifychain`. It refuses
+to revoke the last active owner of any project (for example `pm-verifychain` on
+`verifychain`) unless you pass `--force`. Grant another owner first.
 
 `--rotate` replaces the hash (so the old token dies) and clears `revoked`. A
 revoked bot can only be re-enabled with `--rotate`. Roles are kept when a bot is
