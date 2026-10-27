@@ -19,7 +19,7 @@ func TestACLAdminOnDrive(t *testing.T) {
 	dir := t.TempDir()
 	a := acladmin.New(nb())
 	for _, g := range []struct{ bot, role string }{
-		{"pm-verifychain", "owner"}, {"implementor-verifychain", "write"}, {"reviewer-verifychain", "read"},
+		{"pm-verifychain", "owner"}, {"implementor-verifychain", "write"}, {"reviewer-verifychain", "write"},
 	} {
 		if _, err := a.Grant(ctx, g.bot, "verifychain", g.role, acladmin.GrantOpts{TokenOut: filepath.Join(dir, g.bot)}); err != nil {
 			t.Fatal(g.bot, err)
@@ -42,7 +42,7 @@ func TestACLAdminOnDrive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for bot, want := range map[string]acl.Role{"pm-verifychain": acl.Owner, "implementor-verifychain": acl.Write, "reviewer-verifychain": acl.Read} {
+	for bot, want := range map[string]acl.Role{"pm-verifychain": acl.Owner, "implementor-verifychain": acl.Write, "reviewer-verifychain": acl.Write} {
 		tok, _ := os.ReadFile(filepath.Join(dir, bot))
 		id, err := parsed.Authenticate(strings.TrimSpace(string(tok)))
 		if bot == "reviewer-verifychain" {

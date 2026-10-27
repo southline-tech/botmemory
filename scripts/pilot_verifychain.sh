@@ -11,7 +11,7 @@ set -euo pipefail
 BIN=${BOTVAULT_BIN:-botvault}
 DIR=${PILOT_TOKEN_DIR:-$HOME/.config/botvault/pilot}
 PROJECT=verifychain
-BOTS=("pm-verifychain owner" "implementor-verifychain write" "reviewer-verifychain read")
+BOTS=("pm-verifychain owner" "implementor-verifychain write" "reviewer-verifychain write")
 
 apply=0; [[ "${1:-}" == "--apply" ]] && apply=1
 if (( apply )) && [[ "${BOTVAULT_BACKEND:-drive}" == "drive" && "${BOTVAULT_PILOT_ALLOW_DRIVE:-}" != 1 ]]; then

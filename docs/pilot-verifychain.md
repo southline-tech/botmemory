@@ -7,15 +7,12 @@ granted, and there are no wildcards.
 |---|---|---|
 | `pm-verifychain` | `owner` | everything, plus `delete` (archive) and `reindex` |
 | `implementor-verifychain` | `write` | `get/list/search/history` plus `put/append` |
-| `reviewer-verifychain` | `read` | `get/list/search/history` only |
+| `reviewer-verifychain` | `write` | `get/list/search/history` plus `put/append` (records its review findings) |
 
-**Role decision (open):** if the reviewer is meant to *record* its findings in
-botVault (for example appending to a `review-*` record), it needs `write`; with `read`
-it can only report back through another channel. botVault has no
-append-only role today. Recommendation: start the reviewer on `read`, and move it to
-`write` (`botvault acl grant reviewer-verifychain verifychain write`, which
-keeps the token) once reviewers start writing findings. Every write is still
-attributed through `updated_by`.
+**Role decision (PM, M3):** the reviewer gets `write` so it can record findings
+in botVault (for example appending to a `review-*` record). No append-only role is
+added. All writes are attributed via `updated_by` from the token, so reviewer
+edits are always distinguishable; only the PM (`owner`) can archive or reindex.
 
 ## Granting (needs Brett's approval for real Drive)
 
@@ -77,7 +74,7 @@ git.) Every call names `project: "verifychain"`, and other projects are denied.
 ```sh
 botvault acl list                                    # bots, roles, active/REVOKED; no hashes
 botvault acl revoke reviewer-verifychain             # stops working within 60s
-botvault acl grant reviewer-verifychain verifychain read --rotate \
+botvault acl grant reviewer-verifychain verifychain write --rotate \
   --token-out ~/.config/botvault/pilot/reviewer-verifychain/botvault.token.new
 ```
 

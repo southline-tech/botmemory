@@ -26,7 +26,7 @@ func TestACLCommandMemory(t *testing.T) {
 	}
 	tp := filepath.Join(dir, "pm.token")
 	run("grant", "pm-verifychain", "verifychain", "owner", "--token-out", tp)
-	run("grant", "reviewer-verifychain", "verifychain", "read", "--token-out="+filepath.Join(dir, "rv.token"))
+	run("grant", "reviewer-verifychain", "verifychain", "write", "--token-out="+filepath.Join(dir, "rv.token"))
 	run("revoke", "reviewer-verifychain")
 	run("list")
 	tok, _ := os.ReadFile(tp)
@@ -35,7 +35,7 @@ func TestACLCommandMemory(t *testing.T) {
 	if strings.Contains(s, token) || strings.Contains(s, acl.HashToken(token)) || strings.Contains(s, "bv_") {
 		t.Fatal("CLI output contains a token or hash")
 	}
-	for _, want := range []string{"pm-verifychain", "active", "verifychain=owner", "reviewer-verifychain", "REVOKED", "verifychain=read"} {
+	for _, want := range []string{"pm-verifychain", "active", "verifychain=owner", "reviewer-verifychain", "REVOKED", "verifychain=write"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("list output missing %q:\n%s", want, s)
 		}
