@@ -1,0 +1,12 @@
+# secrets & local config — never commit
+.env
+*.env
+!.env.example
+*credentials*.json
+client_secret*.json
+token*.json
+acl.local.json
+# data lives in Drive, never git
+data/
+/botvault
+*.test
