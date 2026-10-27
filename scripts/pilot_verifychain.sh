@@ -9,7 +9,7 @@
 # $PILOT_TOKEN_DIR/<bot>/botvault.token (mode 0600) and NEVER printed.
 set -euo pipefail
 BIN=${BOTVAULT_BIN:-botvault}
-DIR=${PILOT_TOKEN_DIR:-$HOME/.config/botvault/pilot}
+DIR=${PILOT_TOKEN_DIR:-/workspace/loops/RAD-280-pilot}
 PROJECT=verifychain
 BOTS=("pm-verifychain owner" "implementor-verifychain write" "reviewer-verifychain write")
 

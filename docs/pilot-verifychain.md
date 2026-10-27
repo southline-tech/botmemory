@@ -25,10 +25,10 @@ BOTVAULT_PILOT_ALLOW_DRIVE=1 scripts/pilot_verifychain.sh --apply
 
 Each grant mints a fresh token and writes **only its SHA-256 hash** into
 `_acl.json` (conditional on the Drive file version, retried on a concurrent
-edit). It writes the raw token to `~/.config/botvault/pilot/<bot>/botvault.token`
+edit). It writes the raw token to `/workspace/loops/RAD-280-pilot/<bot>/botvault.token`
 with mode 0600. That file must not already exist, and a symlink there is refused. `O_NOFOLLOW`
 only checks the final path component, so the script creates each per-bot
-directory with mode 0700 under your own config dir. If the ACL write fails
+directory with mode 0700 under `/workspace/loops/RAD-280-pilot/` (override with `PILOT_TOKEN_DIR`). If the ACL write fails
 after the token file was written, the CLI re-reads the ACL. If the new hash is
 there, the grant succeeded. Otherwise the file is **kept** (Drive may still
 apply the write late) and the CLI reports the outcome as unknown, giving the
@@ -41,10 +41,13 @@ this host: a second run is refused while the per-vault ACL lock is held.
 
 - Never paste a token into chat, Slack, Linear, an email, a commit, or a prompt.
   Don't `cat` it into a terminal that is being recorded or logged.
-- **Same host (the pilot setup):** move the file into the bot's own config dir,
-  owned by that bot's user, at mode 600:
-  `install -m 600 -o <botuser> ~/.config/botvault/pilot/<bot>/botvault.token /home/<botuser>/.config/botvault/token`
-  then delete the staging copy (`shred -u` or `rm`).
+- **Same host (the pilot setup):** all pilot bots run as the same `box` Unix
+  user, so there is no per-bot owner to `install -o` to, and Unix permissions
+  can't separate one bot's token from another's. Keep each token where it was
+  minted, `/workspace/loops/RAD-280-pilot/<bot>/botvault.token` (file 0600, dir
+  0700), and have each bot's launcher read **only its own** file. Don't copy it
+  anywhere else. Separation between bots is by convention plus the ACL roles,
+  not by OS user.
 - **Different host:** copy over an authenticated channel (`scp`/`rsync` over SSH)
   straight into the target path, then delete the staging copy. Don't use a
   pastebin, shared drive, or chat attachment.
@@ -58,7 +61,7 @@ The bot sends `Authorization: Bearer <token>`. Load the token from its file at
 launch so it never sits in a config that gets committed or shared:
 
 ```sh
-export BOTVAULT_TOKEN="$(cat ~/.config/botvault/token)"   # in the bot's launcher, not a dotfile in git
+export BOTVAULT_TOKEN="$(cat /workspace/loops/RAD-280-pilot/<bot>/botvault.token)"   # in the bot's launcher, not a dotfile in git
 ```
 
 ```json
@@ -83,7 +86,7 @@ botvault acl list                                    # bots, roles, active/REVOK
 botvault acl revoke reviewer-verifychain             # stops working within 60s
 botvault acl remove reviewer-verifychain             # delete the entry entirely
 botvault acl grant reviewer-verifychain verifychain write --rotate \
-  --token-out ~/.config/botvault/pilot/reviewer-verifychain/botvault.token.new
+  --token-out /workspace/loops/RAD-280-pilot/reviewer-verifychain/botvault.token.new
 ```
 
 `revoke` applies to the **bot as a whole**: it has one token, so revoking
@@ -101,3 +104,43 @@ ACL stays in force for up to about 5 minutes.
 Only against memory and the fake Drive (`internal/acladmin`,
 `internal/drive` `TestACLAdminOnDrive`, `cmd/botvault` `TestACLCommandMemory`).
 No real pilot tokens have been granted.
+
+## Server environment and restart (names only, never values)
+
+`botvault serve` reads these (from a grep of every `os.Getenv` in the code):
+
+| Variable | Needed for | Notes |
+|---|---|---|
+| `BOTVAULT_OAUTH_CLIENT_ID` | serve (drive) | box env secret |
+| `BOTVAULT_OAUTH_CLIENT_SECRET` | serve (drive) | box env secret |
+| `BOTVAULT_OAUTH_REFRESH_TOKEN` | serve (drive) | loaded from `/workspace/loops/RAD-280-oauth/refresh_token` (0600) at launch |
+| `BOTVAULT_DRIVE_ROOT_ID` | serve, acl (drive) | loaded from `/workspace/loops/RAD-280-oauth/drive_root_id` |
+| `BOTVAULT_ADDR` | serve | optional, default `127.0.0.1:8787`; non-loopback binds are refused |
+| `BOTVAULT_BACKEND` | all | optional: `drive` (default) or `memory` (tests only) |
+| `BOTVAULT_LOCK_FILE` | serve | optional instance-lock override |
+| `BOTVAULT_ACL_FILE` | serve | optional local ACL file instead of Drive `_acl.json`; `acl` refuses to run while it's set |
+| `BOTVAULT_ACL_LOCK_FILE` | acl | optional ACL-lock override |
+| `XDG_RUNTIME_DIR` | acl | picks the per-user ACL lock dir |
+
+`BOTVAULT_OAUTH_REDIRECT_URL` is also a box env secret. It was used once for the
+consent and code exchange; `serve` doesn't read it.
+
+The OAuth client id and secret live in the **box's env secrets** (already in the
+environment). They are never in a `.env` file, the repo, or chat.
+
+Restart recipe:
+
+```sh
+pkill -f 'botvault serve' || true                       # stop (the flock is released on exit)
+export BOTVAULT_OAUTH_REFRESH_TOKEN="$(cat /workspace/loops/RAD-280-oauth/refresh_token)"
+export BOTVAULT_DRIVE_ROOT_ID="$(cat /workspace/loops/RAD-280-oauth/drive_root_id)"
+: "${BOTVAULT_OAUTH_CLIENT_ID:?missing}" "${BOTVAULT_OAUTH_CLIENT_SECRET:?missing}"
+nohup botvault serve >/workspace/loops/RAD-280-pilot/serve.log 2>&1 &   # binds 127.0.0.1:8787
+sleep 2
+# health: there is no /health endpoint, so an unauthenticated POST to /mcp
+# should get 401 (server up, auth enforced)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8787/mcp   # expect 401
+```
+
+For a full check, run an MCP `ping` with a bot's token (read from its file,
+never echoed).
