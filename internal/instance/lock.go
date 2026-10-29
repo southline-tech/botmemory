@@ -15,10 +15,10 @@ import (
 	"syscall"
 )
 
-var ErrRunning = errors.New("another botvault instance holds the lock")
+var ErrRunning = errors.New("another botmemory instance holds the lock")
 
 // ErrNotLockFile: the lock path names an existing, non-empty file whose
-// contents are not a botvault lock (a PID line). It is never truncated.
+// contents are not a botmemory lock (a PID line). It is never truncated.
 var ErrNotLockFile = errors.New("refusing to use an existing non-lock file as a lock")
 
 // ErrUnsafeDir: a lock directory is not a real directory owned by us with
@@ -54,7 +54,7 @@ func SecureDir(dir string) error {
 	return nil
 }
 
-// UserDir is the per-user botvault lock directory, <home>/.cache/botvault,
+// UserDir is the per-user botmemory lock directory, <home>/.cache/botmemory,
 // where <home> is the passwd home directory of the current uid. It does NOT
 // consult $HOME, $XDG_RUNTIME_DIR or $XDG_CACHE_HOME, so cron, ssh -c and
 // agent shells of the same user all get the same path. Created 0700 and
@@ -71,7 +71,7 @@ func userDirIn(home string) (string, error) {
 	if !filepath.IsAbs(home) {
 		return "", fmt.Errorf("%w: home %q is not absolute", ErrUnsafeDir, home)
 	}
-	d := filepath.Join(home, ".cache", "botvault")
+	d := filepath.Join(home, ".cache", "botmemory")
 	if err := SecureDir(d); err != nil {
 		return "", err
 	}

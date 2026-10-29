@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/acladmin"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/acladmin"
 )
 
-// M3: `botvault acl` against the (fake) Drive backend: the version check
+// M3: `botmemory acl` against the (fake) Drive backend: the version check
 // rejects a stale write and the retry keeps a concurrent edit.
 func TestACLAdminOnDrive(t *testing.T) {
 	_, nb := newFake(t)

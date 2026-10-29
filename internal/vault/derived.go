@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 const summaryLen = 500
@@ -167,7 +167,7 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (id
 			if json.Unmarshal(data, &idx) == nil && idx.Entries != nil {
 				return &idx, false, nil
 			}
-			log.Printf("botvault: %s: corrupt index; rebuilding from records", project)
+			log.Printf("botmemory: %s: corrupt index; rebuilding from records", project)
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, false, err
 		}
@@ -179,9 +179,9 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (id
 	}
 	if err := v.saveIndex(ctx, project, idx); err != nil {
 		v.dirty.Store(project, true)
-		log.Printf("botvault: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
+		log.Printf("botmemory: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
 	} else if err := v.clearDirty(ctx, project); err != nil {
-		log.Printf("botvault: %s: %v (will rebuild again)", project, err)
+		log.Printf("botmemory: %s: %v (will rebuild again)", project, err)
 	}
 	return idx, true, nil
 }
@@ -205,7 +205,7 @@ func (v *Vault) rebuildIndex(ctx context.Context, project string) (*Index, []str
 		}
 		r, err := v.load(ctx, path.Join(dir, n))
 		if errors.Is(err, ErrCorrupt) {
-			log.Printf("botvault: %s: skipping unparseable record %s in index rebuild: %v", project, n, err)
+			log.Printf("botmemory: %s: skipping unparseable record %s in index rebuild: %v", project, n, err)
 			skipped = append(skipped, n)
 			continue
 		}
@@ -328,7 +328,7 @@ func (v *Vault) Search(ctx context.Context, bot, project, query string, f ListFi
 				return nil, err
 			}
 			// One unreadable project must not fail a cross-project search.
-			log.Printf("botvault: search: skipping project %s: %v", p, err)
+			log.Printf("botmemory: search: skipping project %s: %v", p, err)
 			continue
 		}
 		for _, e := range idx.Entries {

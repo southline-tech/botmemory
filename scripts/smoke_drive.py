@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Real-Drive smoke test for a running botVault server (RAD-280).
+"""Real-Drive smoke test for a running botMemory server.
 
 Exercises every MCP tool against a live server and prints one PASS/FAIL line
 per check. Reads everything from the environment; never prints the token.
 
-  BOTVAULT_SMOKE_TOKEN    bearer token with owner on BOTVAULT_SMOKE_PROJECT (required)
-  BOTVAULT_SMOKE_PROJECT  throwaway project; must start with "smoke-" (default: smoke-test)
-  BOTVAULT_SMOKE_TEST_ROOT=1  allow any project name (only against a test vault root)
-  BOTVAULT_URL            default http://127.0.0.1:8787/mcp
-  BOTVAULT_SMOKE_M1=1     only the M1 tools (no search/history/reindex)
+  BOTMEMORY_SMOKE_TOKEN    bearer token with owner on BOTMEMORY_SMOKE_PROJECT (required)
+  BOTMEMORY_SMOKE_PROJECT  throwaway project; must start with "smoke-" (default: smoke-test)
+  BOTMEMORY_SMOKE_TEST_ROOT=1  allow any project name (only against a test vault root)
+  BOTMEMORY_URL            default http://127.0.0.1:8787/mcp
+  BOTMEMORY_SMOKE_M1=1     only the M1 tools (no search/history/reindex)
 
 Exit status is non-zero if any check fails.
 
@@ -18,15 +18,15 @@ from _acl.json, and discard the token (see README "Real-Drive smoke test").
 """
 import json, os, sys, time, urllib.error, urllib.request
 
-URL = os.environ.get("BOTVAULT_URL", "http://127.0.0.1:8787/mcp")
-TOKEN = os.environ.get("BOTVAULT_SMOKE_TOKEN", "")
-PROJECT = os.environ.get("BOTVAULT_SMOKE_PROJECT", "smoke-test")
-M1 = os.environ.get("BOTVAULT_SMOKE_M1") == "1"
+URL = os.environ.get("BOTMEMORY_URL", "http://127.0.0.1:8787/mcp")
+TOKEN = os.environ.get("BOTMEMORY_SMOKE_TOKEN", "")
+PROJECT = os.environ.get("BOTMEMORY_SMOKE_PROJECT", "smoke-test")
+M1 = os.environ.get("BOTMEMORY_SMOKE_M1") == "1"
 if not TOKEN:
-    sys.exit("BOTVAULT_SMOKE_TOKEN is not set")
-if not PROJECT.startswith("smoke-") and os.environ.get("BOTVAULT_SMOKE_TEST_ROOT") != "1":
+    sys.exit("BOTMEMORY_SMOKE_TOKEN is not set")
+if not PROJECT.startswith("smoke-") and os.environ.get("BOTMEMORY_SMOKE_TEST_ROOT") != "1":
     sys.exit(f"refusing to write to project {PROJECT!r}: use a smoke-* project "
-             "(or set BOTVAULT_SMOKE_TEST_ROOT=1 against a test vault root)")
+             "(or set BOTMEMORY_SMOKE_TEST_ROOT=1 against a test vault root)")
 
 
 def call(name, args, tok=None):

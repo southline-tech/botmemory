@@ -1,4 +1,4 @@
-module github.com/southline-tech/botvault
+module github.com/southline-tech/botmemory
 
 go 1.27.3
 

@@ -29,6 +29,7 @@ func TestNormalizeLocalhost(t *testing.T) {
 }
 
 func TestLockPathFixedPerRoot(t *testing.T) {
+	t.Setenv("BOTMEMORY_LOCK_FILE", "")
 	t.Setenv("BOTVAULT_LOCK_FILE", "")
 	a := lockPath("root-A")
 	t.Setenv("TMPDIR", "/elsewhere")
@@ -36,14 +37,26 @@ func TestLockPathFixedPerRoot(t *testing.T) {
 	if lockPath("root-A") != a {
 		t.Fatal("lock path varies with environment")
 	}
-	if !strings.HasPrefix(a, "/var/tmp/botvault-") || !strings.HasSuffix(a, ".lock") || len(a) != len("/var/tmp/botvault-")+12+5 {
+	if !strings.HasPrefix(a, "/var/tmp/botmemory-") || !strings.HasSuffix(a, ".lock") || len(a) != len("/var/tmp/botmemory-")+12+5 {
 		t.Fatalf("unexpected path %s", a)
 	}
 	if lockPath("root-B") == a {
 		t.Fatal("different roots share a lock")
 	}
-	t.Setenv("BOTVAULT_LOCK_FILE", "/custom.lock")
+	t.Setenv("BOTMEMORY_LOCK_FILE", "/custom.lock")
 	if lockPath("root-A") != "/custom.lock" {
 		t.Fatal("override ignored")
+	}
+}
+
+func TestEnvLegacyFallback(t *testing.T) {
+	t.Setenv("BOTMEMORY_LOCK_FILE", "")
+	t.Setenv("BOTVAULT_LOCK_FILE", "/legacy.lock")
+	if lockPath("x") != "/legacy.lock" {
+		t.Fatal("BOTVAULT_* fallback ignored")
+	}
+	t.Setenv("BOTMEMORY_LOCK_FILE", "/new.lock")
+	if lockPath("x") != "/new.lock" {
+		t.Fatal("BOTMEMORY_* should win over BOTVAULT_*")
 	}
 }

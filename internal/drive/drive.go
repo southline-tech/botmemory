@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 const folderMime = "application/vnd.google-apps.folder"
@@ -294,7 +294,7 @@ func (d *Backend) Write(ctx context.Context, p string, data []byte) error {
 // WriteIf checks the file's current Drive version against rev immediately
 // before uploading. Drive offers no compare-and-swap for files.update, so a
 // small window remains; the server's single-instance lock closes it for
-// botVault (the only writer, drive.file scope).
+// botMemory (the only writer, drive.file scope).
 func (d *Backend) WriteIf(ctx context.Context, p string, data []byte, rev string) error {
 	return d.write(ctx, p, data, &rev)
 }

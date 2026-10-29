@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/instance"
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/instance"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 // M3: the CLI never prints a token or a hash, and works on the memory backend.
@@ -76,7 +76,7 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	lp := filepath.Join(dir, "acl.lock")
-	t.Setenv("BOTVAULT_ACL_LOCK_FILE", lp)
+	t.Setenv("BOTMEMORY_ACL_LOCK_FILE", lp)
 	m := store.NewMemory()
 	held, err := instance.Acquire(lp)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 	var out bytes.Buffer
 	tp := filepath.Join(dir, "b.token")
 	err = runACLLocked(ctx, m, "root", []string{"grant", "b", "p", "write", "--token-out", tp}, &out)
-	if err == nil || !strings.Contains(err.Error(), "another `botvault acl` run") {
+	if err == nil || !strings.Contains(err.Error(), "another `botmemory acl` run") {
 		t.Fatalf("concurrent run not refused: %v", err)
 	}
 	if _, err := os.Stat(tp); !os.IsNotExist(err) {
@@ -101,6 +101,7 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 }
 
 func TestACLLockPath(t *testing.T) {
+	t.Setenv("BOTMEMORY_ACL_LOCK_FILE", "")
 	t.Setenv("BOTVAULT_ACL_LOCK_FILE", "")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // must not matter (R4-1)
 	rt := filepath.Dir(mustUserDir(t))
@@ -109,7 +110,7 @@ func TestACLLockPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, _ := aclLockPath("other")
-	if !strings.HasPrefix(p, filepath.Join(rt, "botvault", "acl-")) || strings.HasPrefix(p, "/var/tmp") || p == q || p == lockPath("someroot") {
+	if !strings.HasPrefix(p, filepath.Join(rt, "botmemory", "acl-")) || strings.HasPrefix(p, "/var/tmp") || p == q || p == lockPath("someroot") {
 		t.Fatalf("bad acl lock path %q", p)
 	}
 	if fi, err := os.Stat(filepath.Dir(p)); err != nil || fi.Mode().Perm() != 0o700 {

@@ -10,23 +10,23 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/southline-tech/botvault/internal/acladmin"
-	"github.com/southline-tech/botvault/internal/instance"
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/acladmin"
+	"github.com/southline-tech/botmemory/internal/instance"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 const aclUsage = `usage:
-  botvault acl grant <bot> <project> <role> --token-out FILE [--rotate]
-  botvault acl revoke <bot> [--force]
-  botvault acl remove <bot> [--force]
-  botvault acl list
+  botmemory acl grant <bot> <project> <role> --token-out FILE [--rotate]
+  botmemory acl revoke <bot> [--force]
+  botmemory acl remove <bot> [--force]
+  botmemory acl list
 roles: read | write | owner. A new bot (or --rotate) gets a fresh token written
 ONLY to FILE (mode 0600, must not exist); only its hash goes into _acl.json.
 revoke disables the bot's token for EVERY project; it refuses to remove the
 last active owner of any project unless --force. remove deletes the bot's
 entry entirely (same last-owner rule).`
 
-// runACL implements `botvault acl ...` against b. It never prints a token
+// runACL implements `botmemory acl ...` against b. It never prints a token
 // or a hash.
 func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) error {
 	var pos []string
@@ -124,15 +124,15 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 	return nil
 }
 
-// aclLockPath serialises `botvault acl` runs against one vault on this host
-// (BOTVAULT_ACL_LOCK_FILE overrides). It is separate from the server's
+// aclLockPath serialises `botmemory acl` runs against one vault on this host
+// (BOTMEMORY_ACL_LOCK_FILE overrides). It is separate from the server's
 // instance lock: the server only ever reads _acl.json, so it never needs it.
 // Like the instance lock it covers ONE HOST only; two hosts editing the same
 // ACL rely on the Drive version check plus the re-read verification.
 // The default lives in a per-user 0700 dir (instance.UserDir), not
 // world-writable /var/tmp.
 func aclLockPath(rootID string) (string, error) {
-	if p := os.Getenv("BOTVAULT_ACL_LOCK_FILE"); p != "" {
+	if p := env("ACL_LOCK_FILE"); p != "" {
 		return p, nil
 	}
 	d, err := instance.UserDir()
@@ -152,7 +152,7 @@ func runACLLocked(ctx context.Context, b store.Backend, rootID string, args []st
 	l, err := instance.Acquire(lp)
 	if err != nil {
 		if errors.Is(err, instance.ErrRunning) {
-			return fmt.Errorf("another `botvault acl` run holds %s; wait for it and retry", lp)
+			return fmt.Errorf("another `botmemory acl` run holds %s; wait for it and retry", lp)
 		}
 		return err
 	}
@@ -161,16 +161,16 @@ func runACLLocked(ctx context.Context, b store.Backend, rootID string, args []st
 }
 
 func aclMain(args []string) error {
-	if os.Getenv("BOTVAULT_ACL_FILE") != "" {
-		return errors.New("BOTVAULT_ACL_FILE is set: `botvault acl` edits _acl.json in the vault backend, not a local file; unset it or edit the local file by hand")
+	if env("ACL_FILE") != "" {
+		return errors.New("BOTMEMORY_ACL_FILE is set: `botmemory acl` edits _acl.json in the vault backend, not a local file; unset it or edit the local file by hand")
 	}
 	ctx := context.Background()
 	b, err := backend(ctx)
 	if err != nil {
 		return err
 	}
-	root := os.Getenv("BOTVAULT_DRIVE_ROOT_ID")
-	if os.Getenv("BOTVAULT_BACKEND") == "memory" {
+	root := env("DRIVE_ROOT_ID")
+	if env("BACKEND") == "memory" {
 		root = ""
 	}
 	return runACLLocked(ctx, b, root, args, os.Stdout)

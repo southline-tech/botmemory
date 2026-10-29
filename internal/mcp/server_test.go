@@ -5,16 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/southline-tech/botvault/internal/drive"
+	"github.com/southline-tech/botmemory/internal/drive"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/store"
-	"github.com/southline-tech/botvault/internal/vault"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botmemory/internal/vault"
 )
 
 func newSrv(t *testing.T) *httptest.Server {
@@ -70,7 +70,7 @@ func TestAuthRequired(t *testing.T) {
 func TestInitializeAndList(t *testing.T) {
 	s := newSrv(t)
 	_, out := rpc(t, s, "pm-tok", "initialize", map[string]any{})
-	if out["result"].(map[string]any)["serverInfo"].(map[string]any)["name"] != "botvault" {
+	if out["result"].(map[string]any)["serverInfo"].(map[string]any)["name"] != "botmemory" {
 		t.Fatal(out)
 	}
 	_, out = rpc(t, s, "pm-tok", "tools/list", nil)
@@ -199,11 +199,11 @@ func TestOriginCheck(t *testing.T) {
 
 func TestM2Tools(t *testing.T) {
 	s := newSrv(t)
-	if isErr, txt := call(t, s, "pm-tok", "put", map[string]any{"project": "vc", "key": "plan", "title": "Rollout plan", "body": "ship botvault"}); isErr {
+	if isErr, txt := call(t, s, "pm-tok", "put", map[string]any{"project": "vc", "key": "plan", "title": "Rollout plan", "body": "ship botmemory"}); isErr {
 		t.Fatal(txt)
 	}
 	call(t, s, "impl-tok", "append", map[string]any{"project": "vc", "key": "plan", "text": "phase two"})
-	if isErr, txt := call(t, s, "impl-tok", "search", map[string]any{"project": "*", "query": "rollout botvault"}); isErr || !strings.Contains(txt, `"key": "plan"`) && !strings.Contains(txt, `"key":"plan"`) {
+	if isErr, txt := call(t, s, "impl-tok", "search", map[string]any{"project": "*", "query": "rollout botmemory"}); isErr || !strings.Contains(txt, `"key": "plan"`) && !strings.Contains(txt, `"key":"plan"`) {
 		t.Fatalf("search: %s", txt)
 	}
 	isErr, txt := call(t, s, "impl-tok", "history", map[string]any{"project": "vc", "key": "plan"})

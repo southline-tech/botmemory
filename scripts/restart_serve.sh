@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAD-280: restart the botVault server on this box. Run it; don't paste it.
+# Restart the botMemory server on this box. Run it; don't paste it.
 #
 #   scripts/restart_serve.sh
 #
@@ -9,36 +9,36 @@
 # touching the running server. Prints env names only, never values.
 #
 # Overrides (names only):
-#   BOTVAULT_BIN        binary (default $HOME/.local/bin/botvault)
-#   BOTVAULT_OAUTH_DIR  dir with refresh_token + drive_root_id (default /workspace/loops/RAD-280-oauth)
-#   BOTVAULT_LOG_DIR    log dir (default /workspace/loops/RAD-280-pilot); log is serve.log
-#   BOTVAULT_ADDR       listen address (default 127.0.0.1:8787)
+#   BOTMEMORY_BIN        binary (default $HOME/.local/bin/botmemory)
+#   BOTMEMORY_OAUTH_DIR  dir with refresh_token + drive_root_id (default $HOME/.config/botmemory)
+#   BOTMEMORY_LOG_DIR    log dir (default $HOME/.local/var/botmemory); log is serve.log
+#   BOTMEMORY_ADDR       listen address (default 127.0.0.1:8787)
 #   STOP_TIMEOUT        seconds to wait for the old process (default 15)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-BIN=${BOTVAULT_BIN:-$HOME/.local/bin/botvault}
-OAUTH_DIR=${BOTVAULT_OAUTH_DIR:-/workspace/loops/RAD-280-oauth}
-LOG_DIR=${BOTVAULT_LOG_DIR:-/workspace/loops/RAD-280-pilot}
-ADDR=${BOTVAULT_ADDR:-127.0.0.1:8787}
+BIN=${BOTMEMORY_BIN:-$HOME/.local/bin/botmemory}
+OAUTH_DIR=${BOTMEMORY_OAUTH_DIR:-$HOME/.config/botmemory}
+LOG_DIR=${BOTMEMORY_LOG_DIR:-$HOME/.local/var/botmemory}
+ADDR=${BOTMEMORY_ADDR:-127.0.0.1:8787}
 STOP_TIMEOUT=${STOP_TIMEOUT:-15}
 die() { echo "restart_serve: $*" >&2; exit 1; }
 
 # 1. binary
 if [[ ! -x "$BIN" ]]; then
-	BOTVAULT_BIN="$BIN" scripts/setup_box.sh || die "setup_box.sh failed"
+	BOTMEMORY_BIN="$BIN" scripts/setup_box.sh || die "setup_box.sh failed"
 fi
-[[ -x "$BIN" ]] || die "no botvault binary at $BIN"
+[[ -x "$BIN" ]] || die "no botmemory binary at $BIN"
 
 # 2. env and source files (all checked before anything is stopped)
 for f in refresh_token drive_root_id; do
 	[[ -f "$OAUTH_DIR/$f" && -s "$OAUTH_DIR/$f" ]] || die "missing or empty $OAUTH_DIR/$f"
 done
-BOTVAULT_OAUTH_REFRESH_TOKEN="$(cat "$OAUTH_DIR/refresh_token")"
-BOTVAULT_DRIVE_ROOT_ID="$(cat "$OAUTH_DIR/drive_root_id")"
-export BOTVAULT_OAUTH_REFRESH_TOKEN BOTVAULT_DRIVE_ROOT_ID
-for v in BOTVAULT_OAUTH_CLIENT_ID BOTVAULT_OAUTH_CLIENT_SECRET BOTVAULT_OAUTH_REFRESH_TOKEN BOTVAULT_DRIVE_ROOT_ID; do
+BOTMEMORY_OAUTH_REFRESH_TOKEN="$(cat "$OAUTH_DIR/refresh_token")"
+BOTMEMORY_DRIVE_ROOT_ID="$(cat "$OAUTH_DIR/drive_root_id")"
+export BOTMEMORY_OAUTH_REFRESH_TOKEN BOTMEMORY_DRIVE_ROOT_ID
+for v in BOTMEMORY_OAUTH_CLIENT_ID BOTMEMORY_OAUTH_CLIENT_SECRET BOTMEMORY_OAUTH_REFRESH_TOKEN BOTMEMORY_DRIVE_ROOT_ID; do
 	[[ -n "${!v:-}" ]] || die "$v is missing or empty (client id/secret come from the box env secrets)"
 done
 
@@ -64,7 +64,7 @@ if pgrep -f -x "$PAT" >/dev/null; then
 fi
 
 # 5. start, then check the process and the health check
-export BOTVAULT_ADDR="$ADDR"
+export BOTMEMORY_ADDR="$ADDR"
 nohup "$BIN" serve >>"$LOG" 2>&1 &
 pid=$!
 code=000
@@ -75,4 +75,4 @@ for ((i = 0; i < 20; i++)); do
 	[[ "$code" == 401 ]] && break
 done
 [[ "$code" == 401 ]] || die "health check: POST /mcp returned $code, want 401; see $LOG"
-echo "restart_serve: botvault serve running (pid $pid) on $ADDR; health 401 OK; log $LOG"
+echo "restart_serve: botmemory serve running (pid $pid) on $ADDR; health 401 OK; log $LOG"
