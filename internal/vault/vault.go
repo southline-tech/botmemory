@@ -1,4 +1,4 @@
-// Package vault implements botVault record semantics on top of a store.Backend:
+// Package vault implements botMemory record semantics on top of a store.Backend:
 // validation, ACL checks, write attribution, versioning with history copies,
 // optimistic concurrency (if_version), append, and soft delete (archive).
 package vault
@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 var (
@@ -202,7 +202,7 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	// Record is durable; index and log are derived. Don't fail the write
 	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
 	if err := v.afterWrite(ctx, op, project, next, &indexOK); err != nil {
-		log.Printf("botvault: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
+		log.Printf("botmemory: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
 	}
 	return nil
 }

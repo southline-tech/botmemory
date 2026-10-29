@@ -169,16 +169,16 @@ func (l *Loader) Load() error {
 		l.failures++
 		if l.cur == nil || l.failures >= l.MaxFailures {
 			if l.cur != nil {
-				log.Printf("!!! botvault ACL FAIL-CLOSED: %d consecutive reload failures, denying ALL tokens until _acl.json is fixed: %v", l.failures, err)
+				log.Printf("!!! botmemory ACL FAIL-CLOSED: %d consecutive reload failures, denying ALL tokens until _acl.json is fixed: %v", l.failures, err)
 			}
 			l.cur = DenyAll()
 		} else {
-			log.Printf("!!! botvault ACL reload failed (%d/%d, keeping previous): %v", l.failures, l.MaxFailures, err)
+			log.Printf("!!! botmemory ACL reload failed (%d/%d, keeping previous): %v", l.failures, l.MaxFailures, err)
 		}
 		return err
 	}
 	if l.failures >= l.MaxFailures {
-		log.Printf("botvault ACL recovered after %d failures", l.failures)
+		log.Printf("botmemory ACL recovered after %d failures", l.failures)
 	}
 	l.failures = 0
 	l.cur = a

@@ -8,7 +8,7 @@ import (
 	"path"
 	"sync"
 
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 // FailClosedOnMarkerError decides what happens when the durable
@@ -52,7 +52,7 @@ func (v *Vault) checkLocked(ctx context.Context, project string, s *markState) e
 	case err == nil:
 		s.present = true
 		v.dirty.Store(project, true)
-		log.Printf("botvault: %s: index dirty marker found at startup; rebuilding on access", project)
+		log.Printf("botmemory: %s: index dirty marker found at startup; rebuilding on access", project)
 	case errors.Is(err, store.ErrNotFound):
 		if _, known := v.dirty.Load(project); !known {
 			v.dirty.Store(project, false)
@@ -77,7 +77,7 @@ func (v *Vault) beginWrite(ctx context.Context, project string) error {
 			if FailClosedOnMarkerError {
 				return fmt.Errorf("%w: %v", ErrMarker, err)
 			}
-			log.Printf("botvault: %s: writing index dirty marker failed: %v", project, err)
+			log.Printf("botmemory: %s: writing index dirty marker failed: %v", project, err)
 		} else {
 			s.present = true
 		}
@@ -97,7 +97,7 @@ func (v *Vault) endWrite(ctx context.Context, project string, indexOK bool) {
 	if !indexOK {
 		v.dirty.Store(project, true)
 		if err := v.b.Write(ctx, dirtyPath(project), []byte("1\n")); err != nil {
-			log.Printf("botvault: %s: re-writing index dirty marker failed: %v", project, err)
+			log.Printf("botmemory: %s: re-writing index dirty marker failed: %v", project, err)
 		} else {
 			s.present = true
 		}
@@ -114,7 +114,7 @@ func (v *Vault) removeMarkerLocked(ctx context.Context, project string, s *markS
 		return
 	}
 	if err := v.b.Delete(context.WithoutCancel(ctx), dirtyPath(project)); err != nil {
-		log.Printf("botvault: %s: removing index dirty marker failed (harmless; one rebuild after restart): %v", project, err)
+		log.Printf("botmemory: %s: removing index dirty marker failed (harmless; one rebuild after restart): %v", project, err)
 		return
 	}
 	s.present = false

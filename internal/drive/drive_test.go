@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 // fakeDrive implements just enough of Drive v3 REST for the backend.
@@ -448,6 +448,36 @@ func TestFolderCreateAdoptsOldest(t *testing.T) {
 }
 
 // R1-1: bootstrap's root folder with a lost create response.
+
+func TestBootstrapAdoptsLegacyFolder(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	// Plant a legacy-named root folder the same way Drive would have it.
+	top := New(hc, "root")
+	top.Base = srv.URL
+	id, err := top.folderID(ctx, LegacyRootFolderName, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, seeded, err := Bootstrap(ctx, hc, srv.URL)
+	if err != nil || got != id {
+		t.Fatalf("adopt legacy: id=%s want=%s seeded=%v err=%v", got, id, seeded, err)
+	}
+	// Legacy folder had no _acl.json; Bootstrap seeds one.
+	if !seeded {
+		t.Fatal("expected ACL seed on empty legacy folder")
+	}
+	if len(fd.folders("root", RootFolderName)) != 0 {
+		t.Fatal("bootstrap created a new botMemory folder alongside the legacy one")
+	}
+	if len(fd.folders("root", LegacyRootFolderName)) != 1 {
+		t.Fatal("legacy folder missing after adopt")
+	}
+}
+
 func TestBootstrapLostResponseNoDuplicate(t *testing.T) {
 	fd, _ := newFake(t)
 	srv := httptest.NewServer(fd)

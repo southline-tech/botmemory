@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAD-280 botVault: rebuild the server on a fresh/wiped box.
+# Rebuild the botMemory server on a fresh/wiped box.
 #
 #   scripts/setup_box.sh            # install Go if needed, build, check env + root id
 #   scripts/setup_box.sh --test     # ...and run every package's tests (-race, one at a time)
@@ -9,8 +9,8 @@
 # gitignored .env (mode 600) that you restore yourself.
 #
 # Env (all optional):
-#   BOTVAULT_BIN           output binary   (default $HOME/.local/bin/botvault)
-#   BOTVAULT_ROOT_ID_FILE  root id file    (default $HOME/.config/botvault/drive_root_id)
+#   BOTMEMORY_BIN           output binary   (default $HOME/.local/bin/botmemory)
+#   BOTMEMORY_ROOT_ID_FILE  root id file    (default $HOME/.config/botmemory/drive_root_id)
 #   GO_INSTALL_DIR         where Go goes   (default $HOME/.local/go)
 set -euo pipefail
 
@@ -19,8 +19,8 @@ REPO=$(pwd)
 RUN_TESTS=0
 [[ "${1:-}" == "--test" ]] && RUN_TESTS=1
 
-BIN=${BOTVAULT_BIN:-$HOME/.local/bin/botvault}
-ROOT_ID_FILE=${BOTVAULT_ROOT_ID_FILE:-$HOME/.config/botvault/drive_root_id}
+BIN=${BOTMEMORY_BIN:-$HOME/.local/bin/botmemory}
+ROOT_ID_FILE=${BOTMEMORY_ROOT_ID_FILE:-$HOME/.config/botmemory/drive_root_id}
 GO_DIR=${GO_INSTALL_DIR:-$HOME/.local/go}
 WANT_GO=$(awk '/^go /{print $2}' go.mod)
 fail=0
@@ -61,7 +61,7 @@ fi
 
 # 2. Build.
 mkdir -p "$(dirname "$BIN")"
-go build -trimpath -o "$BIN" ./cmd/botvault
+go build -trimpath -o "$BIN" ./cmd/botmemory
 say "build: $BIN ($(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
 
 # 3. Optional tests, one package at a time (the box is shared).
@@ -82,33 +82,33 @@ if [[ -f .env ]]; then
 	fi
 fi
 check() { if [[ -n "${!1:-}" ]]; then say "env $1: set"; else say "env $1: MISSING"; fail=1; fi; }
-if [[ "${BOTVAULT_BACKEND:-drive}" == "drive" ]]; then
-	if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -z "${BOTVAULT_OAUTH_REFRESH_TOKEN:-}" ]]; then
+if [[ "${BOTMEMORY_BACKEND:-drive}" == "drive" ]]; then
+	if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -z "${BOTMEMORY_OAUTH_REFRESH_TOKEN:-}" ]]; then
 		say "env GOOGLE_APPLICATION_CREDENTIALS: set (ADC)"
 	else
-		check BOTVAULT_OAUTH_CLIENT_ID; check BOTVAULT_OAUTH_CLIENT_SECRET; check BOTVAULT_OAUTH_REFRESH_TOKEN
+		check BOTMEMORY_OAUTH_CLIENT_ID; check BOTMEMORY_OAUTH_CLIENT_SECRET; check BOTMEMORY_OAUTH_REFRESH_TOKEN
 	fi
 else
-	say "env BOTVAULT_BACKEND=${BOTVAULT_BACKEND} (no Drive credentials needed)"
+	say "env BOTMEMORY_BACKEND=${BOTMEMORY_BACKEND} (no Drive credentials needed)"
 fi
 
 # 5. Drive root id: env wins; otherwise the root id file. (Not a secret.)
-if [[ "${BOTVAULT_BACKEND:-drive}" == "drive" ]]; then
-	if [[ -n "${BOTVAULT_DRIVE_ROOT_ID:-}" ]]; then
+if [[ "${BOTMEMORY_BACKEND:-drive}" == "drive" ]]; then
+	if [[ -n "${BOTMEMORY_DRIVE_ROOT_ID:-}" ]]; then
 		if [[ ! -s "$ROOT_ID_FILE" ]]; then
-			mkdir -p "$(dirname "$ROOT_ID_FILE")"; umask 077; printf '%s\n' "$BOTVAULT_DRIVE_ROOT_ID" >"$ROOT_ID_FILE"
+			mkdir -p "$(dirname "$ROOT_ID_FILE")"; umask 077; printf '%s\n' "$BOTMEMORY_DRIVE_ROOT_ID" >"$ROOT_ID_FILE"
 			say "root id: saved to $ROOT_ID_FILE"
-		elif [[ "$(tr -d '[:space:]' <"$ROOT_ID_FILE")" != "$BOTVAULT_DRIVE_ROOT_ID" ]]; then
+		elif [[ "$(tr -d '[:space:]' <"$ROOT_ID_FILE")" != "$BOTMEMORY_DRIVE_ROOT_ID" ]]; then
 			say "root id: env and $ROOT_ID_FILE DIFFER; refusing to guess which vault you mean"; fail=1
 		else
 			say "root id: env matches $ROOT_ID_FILE"
 		fi
 	elif [[ -s "$ROOT_ID_FILE" ]]; then
-		say "root id: from $ROOT_ID_FILE; run with: export BOTVAULT_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\""
+		say "root id: from $ROOT_ID_FILE; run with: export BOTMEMORY_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\""
 	else
-		say "root id: MISSING; run \`$BIN bootstrap\` once (prints BOTVAULT_DRIVE_ROOT_ID), then save it to $ROOT_ID_FILE"; fail=1
+		say "root id: MISSING; run \`$BIN bootstrap\` once (prints BOTMEMORY_DRIVE_ROOT_ID), then save it to $ROOT_ID_FILE"; fail=1
 	fi
 fi
 
 if (( fail )); then say "setup: INCOMPLETE (see MISSING/refusing lines above)"; exit 1; fi
-say "setup: ok; start with: BOTVAULT_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\" $BIN serve"
+say "setup: ok; start with: BOTMEMORY_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\" $BIN serve"

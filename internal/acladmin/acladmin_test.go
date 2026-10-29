@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/store"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/store"
 )
 
 var ctx = context.Background()

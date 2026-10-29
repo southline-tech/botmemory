@@ -12,8 +12,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/southline-tech/botvault/internal/acl"
-	"github.com/southline-tech/botvault/internal/vault"
+	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botmemory/internal/vault"
 )
 
 const protocolVersion = "2025-06-18"
@@ -98,7 +98,7 @@ func (s *Server) dispatch(r *http.Request, bot string, req rpcReq) (any, *rpcErr
 		return map[string]any{
 			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "botvault", "version": "0.1.0-m1"},
+			"serverInfo":      map[string]any{"name": "botmemory", "version": "0.1.0-m1"},
 		}, nil
 	case "ping":
 		return map[string]any{}, nil

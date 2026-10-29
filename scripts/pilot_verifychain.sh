@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# RAD-280 M3: grant the three verifychain-ai pilot bots on project "verifychain".
+# Grant the three verifychain-ai pilot bots on project "verifychain".
 #
 #   scripts/pilot_verifychain.sh            # DRY RUN: print the commands only
 #   scripts/pilot_verifychain.sh --apply    # run them against the configured backend
 #
-# Real Drive grants additionally need BOTVAULT_PILOT_ALLOW_DRIVE=1, and only
-# with Brett's approval. Tokens are written to
-# $PILOT_TOKEN_DIR/<bot>/botvault.token (mode 0600) and NEVER printed.
+# Real Drive grants additionally need BOTMEMORY_PILOT_ALLOW_DRIVE=1, and only
+# with operator approval. Tokens are written to
+# $PILOT_TOKEN_DIR/<bot>/botmemory.token (mode 0600) and NEVER printed.
 set -euo pipefail
-BIN=${BOTVAULT_BIN:-botvault}
-DIR=${PILOT_TOKEN_DIR:-/workspace/loops/RAD-280-pilot}
+BIN=${BOTMEMORY_BIN:-botmemory}
+DIR=${PILOT_TOKEN_DIR:-$HOME/.local/var/botmemory/pilot}
 PROJECT=verifychain
 BOTS=("pm-verifychain owner" "implementor-verifychain write" "reviewer-verifychain write")
 
 apply=0; [[ "${1:-}" == "--apply" ]] && apply=1
-if (( apply )) && [[ "${BOTVAULT_BACKEND:-drive}" == "drive" && "${BOTVAULT_PILOT_ALLOW_DRIVE:-}" != 1 ]]; then
-	echo "refusing: this would grant REAL tokens in Drive. Needs Brett's approval, then BOTVAULT_PILOT_ALLOW_DRIVE=1." >&2
+if (( apply )) && [[ "${BOTMEMORY_BACKEND:-drive}" == "drive" && "${BOTMEMORY_PILOT_ALLOW_DRIVE:-}" != 1 ]]; then
+	echo "refusing: this would grant REAL tokens in Drive. Set BOTMEMORY_PILOT_ALLOW_DRIVE=1 after operator approval." >&2
 	exit 2
 fi
 # Refuse (never chmod) an existing token dir that isn't a real dir, 0700, owned by us.
@@ -32,7 +32,7 @@ check_dir "$DIR"
 for e in "${BOTS[@]}"; do read -r b _ <<<"$e"; check_dir "$DIR/$b"; done
 for e in "${BOTS[@]}"; do
 	read -r bot role <<<"$e"
-	out="$DIR/$bot/botvault.token"
+	out="$DIR/$bot/botmemory.token"
 	cmd=("$BIN" acl grant "$bot" "$PROJECT" "$role" --token-out "$out")
 	if (( apply )); then
 		(umask 077; mkdir -p "$DIR/$bot")
