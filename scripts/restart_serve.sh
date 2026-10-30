@@ -4,12 +4,13 @@
 #   scripts/restart_serve.sh
 #
 # Order: binary present -> env and source files complete -> log dir safe ->
-# stop the old server and wait for it to exit -> start -> check the process
-# and the 401 health check. Any failure before the stop exits without
-# touching the running server. Prints env names only, never values.
+# stop the old server and wait for it to exit -> start -> wait for the
+# "botmemory listening on" log line -> check the 401 health check. Any failure
+# before the stop exits without touching the running server. Prints env names
+# only, never values.
 #
 # Overrides (names only):
-#   BOTMEMORY_BIN        binary (default $HOME/.local/bin/botmemory)
+#   BOTMEMORY_BIN        binary (default $HOME/.local/bin/botmemory); if set, must be an absolute path
 #   BOTMEMORY_OAUTH_DIR  dir with refresh_token + drive_root_id (default $HOME/.config/botmemory)
 #   BOTMEMORY_LOG_DIR    log dir (default $HOME/.local/var/botmemory); log is serve.log
 #   BOTMEMORY_ADDR       listen address (default 127.0.0.1:8787)
@@ -18,12 +19,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+die() { echo "restart_serve: $*" >&2; exit 1; }
+
 BIN=${BOTMEMORY_BIN:-$HOME/.local/bin/botmemory}
+if [[ -n "${BOTMEMORY_BIN:-}" && "$BIN" != /* ]]; then
+	die "BOTMEMORY_BIN must be an absolute path (got: $BIN)"
+fi
 OAUTH_DIR=${BOTMEMORY_OAUTH_DIR:-$HOME/.config/botmemory}
 LOG_DIR=${BOTMEMORY_LOG_DIR:-$HOME/.local/var/botmemory}
 ADDR=${BOTMEMORY_ADDR:-127.0.0.1:8787}
 STOP_TIMEOUT=${STOP_TIMEOUT:-15}
-die() { echo "restart_serve: $*" >&2; exit 1; }
 
 # 1. binary
 if [[ ! -x "$BIN" ]]; then
@@ -63,16 +68,27 @@ if pgrep -f -x "$PAT" >/dev/null; then
 	fi
 fi
 
-# 5. start, then check the process and the health check
+# 5. start, then wait for listening, then check the process and health (401)
 export BOTMEMORY_ADDR="$ADDR"
 nohup "$BIN" serve >>"$LOG" 2>&1 &
 pid=$!
+LISTEN_TIMEOUT=${LISTEN_TIMEOUT:-30}
+listened=0
+for ((i = 0; i < LISTEN_TIMEOUT * 2; i++)); do
+	sleep 0.5
+	kill -0 "$pid" 2>/dev/null || die "server exited at startup; see $LOG"
+	if grep -q 'botmemory listening on http://' "$LOG" 2>/dev/null; then
+		listened=1
+		break
+	fi
+done
+(( listened )) || die "timed out after ${LISTEN_TIMEOUT}s waiting for 'botmemory listening on' in $LOG"
 code=000
 for ((i = 0; i < 20; i++)); do
 	sleep 0.5
-	kill -0 "$pid" 2>/dev/null || die "server exited at startup; see $LOG"
+	kill -0 "$pid" 2>/dev/null || die "server exited after listen; see $LOG"
 	code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://$ADDR/mcp" || true)
 	[[ "$code" == 401 ]] && break
 done
 [[ "$code" == 401 ]] || die "health check: POST /mcp returned $code, want 401; see $LOG"
-echo "restart_serve: botmemory serve running (pid $pid) on $ADDR; health 401 OK; log $LOG"
+echo "restart_serve: botmemory serve running (pid $pid) on $ADDR; listening OK; health 401 OK; log $LOG"

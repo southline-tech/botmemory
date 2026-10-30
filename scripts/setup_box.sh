@@ -9,10 +9,16 @@
 # gitignored .env (mode 600) that you restore yourself.
 #
 # Env (all optional):
-#   BOTMEMORY_BIN           output binary   (default $HOME/.local/bin/botmemory)
+#   BOTMEMORY_BIN           output binary   (default $HOME/.local/bin/botmemory); if set, must be absolute
 #   BOTMEMORY_ROOT_ID_FILE  root id file    (default $HOME/.config/botmemory/drive_root_id)
 #   GO_INSTALL_DIR         where Go goes   (default $HOME/.local/go)
+#
+# Disposable Drive root for smoke/tests: run `botmemory bootstrap --test-folder`
+# (or BOTMEMORY_TEST_FOLDER=1) and save the printed BOTMEMORY_DRIVE_ROOT_ID;
+# set BOTMEMORY_SMOKE_TEST_ROOT=1 when pointing scripts/smoke_drive.py at it.
 set -euo pipefail
+
+say() { printf '%s\n' "$*"; }
 
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
@@ -20,12 +26,13 @@ RUN_TESTS=0
 [[ "${1:-}" == "--test" ]] && RUN_TESTS=1
 
 BIN=${BOTMEMORY_BIN:-$HOME/.local/bin/botmemory}
+if [[ -n "${BOTMEMORY_BIN:-}" && "$BIN" != /* ]]; then
+	say "BOTMEMORY_BIN must be an absolute path (got: $BIN)"; exit 1
+fi
 ROOT_ID_FILE=${BOTMEMORY_ROOT_ID_FILE:-$HOME/.config/botmemory/drive_root_id}
 GO_DIR=${GO_INSTALL_DIR:-$HOME/.local/go}
 WANT_GO=$(awk '/^go /{print $2}' go.mod)
 fail=0
-
-say() { printf '%s\n' "$*"; }
 
 # 1. Go (version from go.mod), verified against go.dev's published sha256.
 have_go() {
@@ -106,7 +113,7 @@ if [[ "${BOTMEMORY_BACKEND:-drive}" == "drive" ]]; then
 	elif [[ -s "$ROOT_ID_FILE" ]]; then
 		say "root id: from $ROOT_ID_FILE; run with: export BOTMEMORY_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\""
 	else
-		say "root id: MISSING; run \`$BIN bootstrap\` once (prints BOTMEMORY_DRIVE_ROOT_ID), then save it to $ROOT_ID_FILE"; fail=1
+		say "root id: MISSING; run \`$BIN bootstrap\` once (prints BOTMEMORY_DRIVE_ROOT_ID), or \`$BIN bootstrap --test-folder\` for a throwaway smoke root; then save it to $ROOT_ID_FILE"; fail=1
 	fi
 fi
 

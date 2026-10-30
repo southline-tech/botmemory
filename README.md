@@ -78,6 +78,8 @@ export BOTMEMORY_DRIVE_ROOT_ID=…
 botmemory serve               # loopback MCP at http://127.0.0.1:8787/mcp
 ```
 
+For a **throwaway** smoke/test vault (never production): `botmemory bootstrap --test-folder` or `BOTMEMORY_TEST_FOLDER=1` creates `botMemory-test`, seeds deny-all `_acl.json`, and prints a root id. Save that id and set `BOTMEMORY_SMOKE_TEST_ROOT=1` when running `scripts/smoke_drive.py`.
+
 For local dev without Drive: `BOTMEMORY_BACKEND=memory` (data lost on exit).
 
 **ACL (Drive `_acl.json`):** only SHA-256 token hashes are stored. Mint a hash with `botmemory mint-token BOT_ID`, grant with:
@@ -116,6 +118,7 @@ Optional pilot notes: [docs/pilot-verifychain.md](docs/pilot-verifychain.md).
 | `BOTMEMORY_OAUTH_CLIENT_ID` / `SECRET` / `REFRESH_TOKEN` | Drive backend (server-side secrets) |
 | `BOTMEMORY_ACL_FILE` | Optional local ACL instead of Drive |
 | `BOTMEMORY_LOCK_FILE` | Optional single-instance lock path |
+| `BOTMEMORY_TEST_FOLDER` | Truthy (`1`/`true`/`yes`) for `bootstrap --test-folder` |
 
 Legacy **`BOTVAULT_*`** names are still read (deprecation warning).
 

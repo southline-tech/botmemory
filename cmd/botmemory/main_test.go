@@ -60,3 +60,24 @@ func TestEnvLegacyFallback(t *testing.T) {
 		t.Fatal("BOTMEMORY_* should win over BOTVAULT_*")
 	}
 }
+
+func TestBootstrapTestFolderEnv(t *testing.T) {
+	t.Setenv("BOTMEMORY_TEST_FOLDER", "")
+	t.Setenv("BOTVAULT_TEST_FOLDER", "")
+	if bootstrapTestFolder(nil) {
+		t.Fatal("empty env should be false")
+	}
+	for _, v := range []string{"1", "true", "YES", " True "} {
+		t.Setenv("BOTMEMORY_TEST_FOLDER", v)
+		if !bootstrapTestFolder(nil) {
+			t.Fatalf("truthy %q", v)
+		}
+	}
+	if !bootstrapTestFolder([]string{"--test-folder"}) {
+		t.Fatal("--test-folder flag should enable test-folder mode")
+	}
+	t.Setenv("BOTMEMORY_TEST_FOLDER", "0")
+	if !bootstrapTestFolder([]string{"--test-folder"}) {
+		t.Fatal("--test-folder should win over env")
+	}
+}
