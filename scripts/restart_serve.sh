@@ -19,6 +19,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+die() { echo "restart_serve: $*" >&2; exit 1; }
+
 BIN=${BOTMEMORY_BIN:-$HOME/.local/bin/botmemory}
 if [[ -n "${BOTMEMORY_BIN:-}" && "$BIN" != /* ]]; then
 	die "BOTMEMORY_BIN must be an absolute path (got: $BIN)"
@@ -27,7 +29,6 @@ OAUTH_DIR=${BOTMEMORY_OAUTH_DIR:-$HOME/.config/botmemory}
 LOG_DIR=${BOTMEMORY_LOG_DIR:-$HOME/.local/var/botmemory}
 ADDR=${BOTMEMORY_ADDR:-127.0.0.1:8787}
 STOP_TIMEOUT=${STOP_TIMEOUT:-15}
-die() { echo "restart_serve: $*" >&2; exit 1; }
 
 # 1. binary
 if [[ ! -x "$BIN" ]]; then

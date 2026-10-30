@@ -18,6 +18,8 @@
 # set BOTMEMORY_SMOKE_TEST_ROOT=1 when pointing scripts/smoke_drive.py at it.
 set -euo pipefail
 
+say() { printf '%s\n' "$*"; }
+
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
 RUN_TESTS=0
@@ -31,8 +33,6 @@ ROOT_ID_FILE=${BOTMEMORY_ROOT_ID_FILE:-$HOME/.config/botmemory/drive_root_id}
 GO_DIR=${GO_INSTALL_DIR:-$HOME/.local/go}
 WANT_GO=$(awk '/^go /{print $2}' go.mod)
 fail=0
-
-say() { printf '%s\n' "$*"; }
 
 # 1. Go (version from go.mod), verified against go.dev's published sha256.
 have_go() {
