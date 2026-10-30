@@ -1,91 +1,141 @@
 # botMemory
 
-Durable, shared, attributable project-state store for AI agent fleets, exposed as an MCP server and backed by Google Drive.
+Shared memory and handoff notes for AI agent fleets — MCP over HTTP, backed by Google Drive. **Not a secrets store:** notes are ordinary Drive files readable to anyone with access to the vault folder.
 
-Data lives in Drive, never in this repo. No secrets or tokens in git.
+Also see [AGENTS.md](AGENTS.md) (pasteable bot rules) · [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)
 
-## Contributing
+> **Rename:** formerly **botVault**. Binary `botmemory`, env **`BOTMEMORY_*`** (legacy **`BOTVAULT_*`** still work with a deprecation warning). Default Drive folder `botMemory`; legacy `botVault` folder is adopted by `bootstrap` (same id).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, tests, DCO sign-off, and PR conventions. See [SECURITY.md](SECURITY.md) for supported versions, private vulnerability reporting, and the threat model.
+## For agents
 
-> **Rename note:** this project was previously called botVault. The binary is now `botmemory`, env vars are `BOTMEMORY_*` (legacy `BOTVAULT_*` still work with a deprecation warning), and the default Drive folder name is `botMemory`. An existing Drive folder named `botVault` is adopted by `bootstrap` (same folder id); rename it in Drive when convenient.
+### What / when
 
-## M1 (this branch)
+Use botMemory for **shared, attributable project state** across bots: decisions, specs, handoffs, assignments, and general notes. Do **not** store secrets — content is **Drive-readable**. Threat model: [SECURITY.md](SECURITY.md).
 
-MCP tools over Streamable HTTP at `POST /mcp`: `list_projects`, `list`, `get`, `put` (with `if_version`), `append`, `delete` (soft: archives only, owners only).
+### MCP connection
 
-- **Auth:** `Authorization: Bearer <bot token>`. `_acl.json` (vault root in Drive) stores only SHA-256 token hashes plus per-project roles (`read` < `write` < `owner`). Deny by default: a token sees only projects explicitly granted; no wildcard. Mint with `botmemory mint-token BOT_ID`. Revoke by setting `"revoked": true`; reloaded every 60s.
-- **Attribution:** `created_by`/`updated_by` come from the token, never from arguments (unknown args are rejected).
-- **Records:** keys are unique per project (`projects/<p>/records/<key>.json`); `kind` is optional metadata and a list filter.
-- **Concurrency:** per-key lock; `put` without `if_version` only creates (existing key → `CONFLICT`); updates need `if_version` = current version. Every write bumps `version` and copies the prior version to `projects/<p>/history/<key>/vN.json`.
-- **Storage:** `store.Backend` interface; `internal/drive` (Drive v3 REST, drive.file) and `store.Memory` (tests/dev).
+Streamable HTTP, **`POST`** only, path **`/mcp`**. Default: `http://127.0.0.1:8787/mcp`. Every request needs **`Authorization: Bearer <bot token>`**. Load the token from a mode-`0600` file at launch; never commit or paste tokens (client interpolation varies).
 
-```sh
-cp .env.example .env   # fill in; .env is gitignored
-go build -o botmemory ./cmd/botmemory && ./botmemory serve
-for p in $(go list ./...); do go test -count=1 -race "$p"; done   # every package (cmd/botmemory, acl, acladmin, drive, instance, mcp, store, vault), one at a time
+```json
+{
+  "mcpServers": {
+    "botmemory": {
+      "url": "http://127.0.0.1:8787/mcp",
+      "headers": { "Authorization": "Bearer ${BOTMEMORY_TOKEN}" }
+    }
+  }
+}
 ```
 
-### Safety notes
-- Binds loopback only (`BOTMEMORY_ADDR` must be 127.0.0.1/::1/localhost); Origin must be loopback if sent; `Authorization: Bearer` required.
-- Single instance: exclusive flock on a lock file fixed per vault, `/var/tmp/botmemory-<sha256(BOTMEMORY_DRIVE_ROOT_ID)[:12]>.lock` (override with `BOTMEMORY_LOCK_FILE`; path logged at startup). Record writes are also conditional on the Drive file `version`, but Drive has no atomic compare-and-swap, so **the concurrency guard only holds for one server process on one host**. Never run two servers against the same Drive root from different hosts (or with different lock-file overrides).
-- `BOTMEMORY_ADDR=localhost:…` is bound as 127.0.0.1 (never resolved).
-- Updates that omit `kind` keep the previous kind.
-- Save order: history/vN (idempotent copy of immutable vN) then the record (commit point). A failure between leaves the record at vN and a retry is safe.
-- ACL reloads every 60s; after 5 consecutive failures it fails closed (denies all) and logs loudly. **Caveat:** while `_acl.json` is broken or unreadable the last good ACL stays in force for up to ~5 minutes (5 × 60s), so a token revoked in that window keeps working until fail-closed kicks in. Revoke by editing a valid `_acl.json`. Duplicate token hashes and invalid bot ids are rejected.
-- Drive error details are logged server-side only; bots see `drive: upstream error (HTTP n)`.
-- `append` to a missing key returns `NOT_FOUND` (create it with `put` first).
+Protocol: JSON-RPC 2.0 — `initialize` (protocolVersion `2025-06-18`, serverInfo name `botmemory`), `ping`, `tools/list`, `tools/call` (no batch).
 
-### Data migration note
-No real Drive data exists in any earlier layout (e.g. kind-scoped `records/<kind>/<key>.json`): no real Drive credential has ever been configured for botMemory, so all testing has used the fake Drive and memory backends. No migration is needed.
+### Tools — example `tools/call` arguments
 
-## M2
-- Tools: `search` (all terms, case-insensitive, over key/kind/title/tags/first 500 chars; `project:"*"` = every readable project; archived hidden unless `status:"archived"`; limit default 50, max 200), `history` (versions newest first; fetch one with `get` + `version`), `reindex` (owner).
-- Derived files per project: `_index.json` (per-key summary) and `log.jsonl` (one line per put/append/delete). They are updated after the record commits; a failure there is logged and never fails the write. Before each record commit a durable `projects/<p>/_index.dirty` marker is written; it is removed once the index is saved. If the marker exists (including after a restart or crash), the next index access (search or write) rebuilds the index from records, saves it, and removes the marker; a missing or corrupt index is likewise rebuilt and saved. Only unparseable records are skipped (logged, and listed in `reindex`'s `skipped`); any other read error (Drive 5xx/429 after retries, a file over the read cap, a deadline) aborts the rebuild without saving and leaves the index dirty, and one bad project never fails a `project:"*"` search. `reindex` forces a rebuild.
-- `log.jsonl` rotates into `log-0001.jsonl`, `log-0002.jsonl`, … before it would pass 8 MiB. No Drive read is ever silently truncated: a file over the 32 MiB read cap is an error.
-- Drive retries 429/5xx/transport errors: 5 attempts, exponential backoff (500ms base, 16s cap) with full jitter, honours `Retry-After`, with a 30s cap on total backoff sleep per Drive request. Each tool call (which may make several Drive requests) has a 50s deadline, inside the 60s HTTP WriteTimeout.
-- Folder creates are never blindly re-POSTed: each attempt is a single POST, the folder is looked up again before any retry and after every create, and the oldest copy is adopted. So a lost create response cannot leave a duplicate folder, and any duplicate resolves the same way after a restart. This also covers bootstrap's root folder.
-- `botmemory bootstrap`: with `BOTMEMORY_DRIVE_ROOT_ID` unset, finds or creates `botMemory` in My Drive (drive.file), seeds a deny-all `_acl.json`, and prints `BOTMEMORY_DRIVE_ROOT_ID=<id>`. Idempotent.
+Pass the object below as the tool arguments (exact field names):
 
-### Real-Drive smoke test
-`scripts/smoke_drive.py` runs every tool against a live server and prints PASS/FAIL per check. It reads only env vars and never prints the token:
+| Tool | Example arguments |
+|------|-------------------|
+| `list_projects` | `{}` |
+| `list` | `{"project":"demo"}` |
+| `get` | `{"project":"demo","key":"plan"}` |
+| `put` (create) | `{"project":"demo","key":"plan","kind":"spec","title":"Plan","body":"..."}` |
+| `put` (update) | `{"project":"demo","key":"plan","title":"Plan","if_version":1}` |
+| `append` | `{"project":"demo","key":"plan","text":"\n- update"}` |
+| `search` | `{"project":"*","query":"handoff rollout"}` |
+| `history` | `{"project":"demo","key":"plan"}` |
+| `reindex` | `{"project":"demo"}` (owner) |
+| `delete` | `{"project":"demo","key":"plan"}` (owner; soft archive) |
+
+**Kinds (closed set):** `decision`, `spec`, `handoff`, `assignment`, `note`.
+
+**Projects / keys:** regex `^[a-z0-9][a-z0-9._-]{0,63}$` — unique key per project; `kind` is metadata, not a namespace.
+
+### Conventions
+
+- Prefer **`handoff`** (or stable keys like `handoff-<topic>`) for turn/context handoffs; include next owner, status, and blockers in the body.
+- Use **`append`** for chronological updates without a version check; use **`put`** + **`if_version`** when replacing structured state.
+- Use **`search`** with `"project":"*"` only when you need every granted project; otherwise name the project.
+- Archived records are hidden from list/search unless you filter with `status:"archived"`.
+
+### Failure modes
+
+- **Server down / connection refused / timeout:** do not retry in a tight loop — report to the human operator once and wait for restart.
+- **`401` / token rejected:** stop; do not mint or rotate tokens. Owner checks ACL / runs `botmemory acl grant … --rotate`. After revoke, deny may take up to **~60s**.
+- **`FORBIDDEN`:** no grant for that project — ask the owner; do not spam other projects.
+- **`CONFLICT` on `put`:** `get` the record, retry **once** with the correct `if_version`; if still conflicting, escalate (another writer).
+- **`NOT_FOUND` on `append`:** create the key with **`put`** first.
+- Never print bearer tokens, OAuth values, or raw ACL hashes in chat, logs, or issues.
+
+---
+
+## Human quickstart
 
 ```sh
-botmemory mint-token smoke-bot         # add the hash to _acl.json as owner of a throwaway project
-BOTMEMORY_DRIVE_ROOT_ID=... botmemory serve &   # OAuth env vars as for serve
-BOTMEMORY_SMOKE_TOKEN=... BOTMEMORY_SMOKE_PROJECT=smoke-tmp scripts/smoke_drive.py   # refuses non smoke-* projects
-# BOTMEMORY_SMOKE_M1=1 limits it to the M1 tools; BOTMEMORY_URL overrides the endpoint.
+cp .env.example .env          # fill BOTMEMORY_*; never commit .env
+go build -o botmemory ./cmd/botmemory
+botmemory bootstrap           # once: prints BOTMEMORY_DRIVE_ROOT_ID=
+export BOTMEMORY_DRIVE_ROOT_ID=…
+botmemory serve               # loopback MCP at http://127.0.0.1:8787/mcp
 ```
-The script refuses any project not named `smoke-*` unless `BOTMEMORY_SMOKE_TEST_ROOT=1` is set (use that only against a test vault root). It never deletes anything, so clean up by hand afterwards: delete `projects/<project>/` in the vault's Drive folder, remove the smoke bot from `_acl.json` (back to `{"bots":{}}` if it was the only one), and discard the token.
 
-## M3
+For local dev without Drive: `BOTMEMORY_BACKEND=memory` (data lost on exit).
 
-### ACL admin CLI
-Edits `_acl.json` in the configured backend (same env as `serve`). Every edit is a conditional write on the current Drive version, retried up to 5 times on a concurrent edit:
+**ACL (Drive `_acl.json`):** only SHA-256 token hashes are stored. Mint a hash with `botmemory mint-token BOT_ID`, grant with:
 
 ```sh
-botmemory acl grant <bot> <project> <role> --token-out FILE [--rotate]   # role: read|write|owner
-botmemory acl revoke <bot> [--force]                                    # whole bot, every project
-botmemory acl remove <bot> [--force]                                    # delete the entry entirely (same last-owner rule)
-botmemory acl list                                                       # bots, roles, active/REVOKED; never hashes
+botmemory acl grant <bot> <project> <role> --token-out FILE   # read|write|owner
+botmemory acl revoke <bot>
+botmemory acl remove <bot>
+botmemory acl list                                            # never prints hashes
 ```
-- A new bot (or `--rotate`) gets a fresh token. Only its SHA-256 goes into `_acl.json`, and the raw token is written only to `FILE`, which is created with mode 0600 and must not already exist (symlinks are refused). The CLI never prints the token. If the ACL write fails, `FILE` is removed.
-- If the ACL write itself fails (Drive may have saved it, or may apply it later), grant re-reads the ACL. If the new hash is there, the grant succeeded. Otherwise the token file is **kept** and grant reports the outcome as unknown, giving the file path. A token whose hash isn't in the ACL can't authenticate, so keeping it is harmless: check `botmemory acl list` later and delete the file if the bot isn't granted. Errors where nothing can have been written (validation, refusals, persistent conflicts) remove the file.
-- After a write is acknowledged, grant and revoke re-read `_acl.json` and report success only if the change is visible (the hash and role are present, or the bot shows revoked). Otherwise they fail with "change not visible on re-read".
-- `botmemory acl` runs hold an exclusive lock, `<dir>/acl-<sha256(root id)[:12]>.lock` where `<dir>` is `<home>/.cache/botmemory` and `<home>` is the passwd home of your uid (it deliberately ignores `$HOME`, `$XDG_RUNTIME_DIR` and `$XDG_CACHE_HOME`, so cron, `ssh -c` and agent shells all get the same lock); a uid with no passwd entry (no home to look up) can't get a default lock and **must set `BOTMEMORY_ACL_LOCK_FILE`**; the path must be absolute, and the dir is created 0700 and refused unless it is a real directory owned by you with no group/other bits. Override with `BOTMEMORY_ACL_LOCK_FILE`; the lock is opened with O_NOFOLLOW and without O_TRUNC, and an existing non-empty file that isn't a botmemory lock (a PID line) is refused, never emptied. A second concurrent run is refused, not queued. The lock covers **one host only**: edits from other hosts rely on the Drive version check and the re-read verification. The server only ever reads `_acl.json`, so it doesn't take this lock.
-- Token files are fsynced. A failed write or close removes the partial file. `O_NOFOLLOW` covers only the last path component, so keep token files in a directory you own.
-- The mint decision is re-checked inside the conditional edit: a bot created concurrently without `--rotate` fails the grant.
-- Granting to an existing bot adds or changes the role and keeps its token. A revoked bot can only be re-enabled with `--rotate`.
-- `revoke` disables the bot's token for **every** project and keeps its roles. It refuses to revoke (or `remove`) the last active owner of any project unless `--force` is given.
-- No wildcard projects. `serve` picks changes up within 60s.
-- With `BOTMEMORY_BACKEND=memory` the CLI edits the CLI process's own memory, which is only useful in tests. With `BOTMEMORY_ACL_FILE` set, it refuses (edit that local file by hand).
 
-### Rebuilding after a box wipe
-`scripts/setup_box.sh [--test]` installs the Go version from `go.mod` if missing (sha256 checked against go.dev), builds `~/.local/bin/botmemory`, and optionally runs every package's tests one at a time. It loads `.env` only if it is a regular file owned by you with mode 600 or 400 and reports the required env vars **by name only** (set/MISSING). It also checks the Drive root id against `~/.config/botmemory/drive_root_id`, writing that file from `BOTMEMORY_DRIVE_ROOT_ID` if missing and refusing if they differ. The script contains no secrets: restore `.env` and the OAuth refresh token yourself.
+Write tokens only to **`FILE`** (created mode `0600`; must not exist). The CLI does not print raw tokens.
 
-### Hardening
-- The lock file is opened with `O_NOFOLLOW`, so a symlink planted at the lock path is refused, and an existing non-lock file is refused rather than truncated. The ACL lock lives in a per-user 0700 dir; the server instance lock still defaults to `/var/tmp` (protected by O_NOFOLLOW and the non-lock check).
-- CI: `persist-credentials: false` on checkout, and a 15-minute job timeout.
+**Tests** (match CI):
 
-### verifychain-ai pilot
-See [docs/pilot-verifychain.md](docs/pilot-verifychain.md) and `scripts/pilot_verifychain.sh` (dry run by default; real Drive grants need an explicit opt-in and approval).
+```sh
+gofmt -l .    # must be empty
+go vet ./...
+go test -race ./...
+# shared box: for p in $(go list ./...); do go test -count=1 -race "$p"; done
+```
+
+**Smoke (real Drive):** grant a throwaway `smoke-*` project, then `scripts/smoke_drive.py` (reads env only; never prints the token). See script header and [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Box setup:** `scripts/setup_box.sh [--test]` builds `~/.local/bin/botmemory` and checks env by name. Override **`BOTMEMORY_BIN`** only with an **absolute path**. Restart: `scripts/restart_serve.sh`.
+
+Optional pilot notes: [docs/pilot-verifychain.md](docs/pilot-verifychain.md).
+
+### Environment (`BOTMEMORY_*`)
+
+| Variable | Purpose |
+|----------|---------|
+| `BOTMEMORY_ADDR` | Listen address (default `127.0.0.1:8787`; loopback only) |
+| `BOTMEMORY_BACKEND` | `drive` (default) or `memory` |
+| `BOTMEMORY_DRIVE_ROOT_ID` | Drive vault root folder id |
+| `BOTMEMORY_OAUTH_CLIENT_ID` / `SECRET` / `REFRESH_TOKEN` | Drive backend (server-side secrets) |
+| `BOTMEMORY_ACL_FILE` | Optional local ACL instead of Drive |
+| `BOTMEMORY_LOCK_FILE` | Optional single-instance lock path |
+
+Legacy **`BOTVAULT_*`** names are still read (deprecation warning).
+
+### Safety (summary)
+
+- Loopback bind only; **`Authorization: Bearer`** required; bad/missing token → **401** with `WWW-Authenticate: Bearer`.
+- **Single instance** per Drive root per host (lock under `/var/tmp` by default).
+- ACL reload ~**60s**; fails closed after repeated load failures (see [SECURITY.md](SECURITY.md)).
+- Attribution (`created_by` / `updated_by`) comes from the token; unknown JSON fields on tools are rejected.
+- Drive has no true CAS across hosts — do not run two servers against one root on different machines.
+
+## Limits
+
+- **Loopback only** — not exposed to the public internet by design.
+- **One server process** per Drive root per host.
+- **Not a secrets store** — vault notes are Drive-readable.
+- **Deny-by-default ACL** — no wildcard projects.
+- **Soft delete only** — `delete` / `reindex` require **owner** role.
+- **No cross-host concurrency guarantee** on the same Drive root.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
