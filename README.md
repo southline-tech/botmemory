@@ -4,6 +4,10 @@ Durable, shared, attributable project-state store for AI agent fleets, exposed a
 
 Data lives in Drive, never in this repo. No secrets or tokens in git.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, tests, DCO sign-off, and PR conventions.
+
 > **Rename note:** this project was previously called botVault. The binary is now `botmemory`, env vars are `BOTMEMORY_*` (legacy `BOTVAULT_*` still work with a deprecation warning), and the default Drive folder name is `botMemory`. An existing Drive folder named `botVault` is adopted by `bootstrap` (same folder id); rename it in Drive when convenient.
 
 ## M1 (this branch)
