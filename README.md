@@ -4,8 +4,6 @@ Shared memory and handoff notes for AI agent fleets — MCP over HTTP, backed by
 
 Also see [AGENTS.md](AGENTS.md) (pasteable bot rules) · [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)
 
-> **Rename:** formerly **botVault**. Binary `botmemory`, env **`BOTMEMORY_*`** (legacy **`BOTVAULT_*`** still work with a deprecation warning). Default Drive folder `botMemory`; legacy `botVault` folder is adopted by `bootstrap` (same id).
-
 ## For agents
 
 ### What / when
@@ -119,8 +117,6 @@ Optional pilot notes: [docs/pilot-verifychain.md](docs/pilot-verifychain.md).
 | `BOTMEMORY_ACL_FILE` | Optional local ACL instead of Drive |
 | `BOTMEMORY_LOCK_FILE` | Optional single-instance lock path |
 | `BOTMEMORY_TEST_FOLDER` | Truthy (`1`/`true`/`yes`) for `bootstrap --test-folder` |
-
-Legacy **`BOTVAULT_*`** names are still read (deprecation warning).
 
 ### Safety (summary)
 

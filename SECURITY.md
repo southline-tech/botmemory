@@ -54,8 +54,7 @@ Include:
 
 - Treat raw bot tokens like passwords. Rotate with `botmemory acl grant … --rotate`; revoke via ACL (`revoke` / `remove`).
 - Keep server-side **`BOTMEMORY_OAUTH_*`** credentials on the host only; never commit them; never put them in Drive notes.
-- Prefer `BOTMEMORY_*` environment names; legacy `BOTVAULT_*` aliases still work with a deprecation warning.
 
 ## Preferred language
 
-Product name: **botMemory**. Environment variables: **`BOTMEMORY_*`** (legacy **`BOTVAULT_*`** deprecated).
+Product name: **botMemory**. Environment variables: **`BOTMEMORY_*`**.

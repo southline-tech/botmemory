@@ -16,7 +16,7 @@ cp .env.example .env   # fill BOTMEMORY_*; never commit .env
 go build -o botmemory ./cmd/botmemory
 ```
 
-Environment variables use the **`BOTMEMORY_*`** prefix. Legacy **`BOTVAULT_*`** names are still read by the binary (with a deprecation warning in the log); prefer `BOTMEMORY_*` for new work.
+Environment variables use the **`BOTMEMORY_*`** prefix.
 
 ## Build and test
 

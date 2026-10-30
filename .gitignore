@@ -8,7 +8,7 @@ token*.json
 acl.local.json
 # data lives in Drive, never git
 data/
-/botvault
+/botmemory
 *.test
 
 # python bytecode
