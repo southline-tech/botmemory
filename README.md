@@ -6,7 +6,7 @@ Data lives in Drive, never in this repo. No secrets or tokens in git.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, tests, DCO sign-off, and PR conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, tests, DCO sign-off, and PR conventions. See [SECURITY.md](SECURITY.md) for supported versions, private vulnerability reporting, and the threat model.
 
 > **Rename note:** this project was previously called botVault. The binary is now `botmemory`, env vars are `BOTMEMORY_*` (legacy `BOTVAULT_*` still work with a deprecation warning), and the default Drive folder name is `botMemory`. An existing Drive folder named `botVault` is adopted by `bootstrap` (same folder id); rename it in Drive when convenient.
 
