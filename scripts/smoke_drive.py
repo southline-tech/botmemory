@@ -7,6 +7,7 @@ per check. Reads everything from the environment; never prints the token.
   BOTMEMORY_SMOKE_TOKEN    bearer token with owner on BOTMEMORY_SMOKE_PROJECT (required)
   BOTMEMORY_SMOKE_PROJECT  throwaway project; must start with "smoke-" (default: smoke-test)
   BOTMEMORY_SMOKE_TEST_ROOT=1  allow any project name (only against a test vault root)
+    (use a root from `botmemory bootstrap --test-folder` / BOTMEMORY_TEST_FOLDER=1)
   BOTMEMORY_URL            default http://127.0.0.1:8787/mcp
   BOTMEMORY_SMOKE_M1=1     only the M1 tools (no search/history/reindex)
 

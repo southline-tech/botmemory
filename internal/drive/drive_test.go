@@ -358,7 +358,7 @@ func TestBootstrap(t *testing.T) {
 	defer srv.Close()
 	hc := &http.Client{Transport: authRT{}}
 	ctx := context.Background()
-	id, seeded, err := Bootstrap(ctx, hc, srv.URL)
+	id, seeded, err := Bootstrap(ctx, hc, srv.URL, false)
 	if err != nil || id == "" || !seeded {
 		t.Fatalf("bootstrap: %q %v %v", id, seeded, err)
 	}
@@ -371,7 +371,7 @@ func TestBootstrap(t *testing.T) {
 		t.Fatalf("acl seed %q", got)
 	}
 	b.Write(ctx, "_acl.json", []byte(`{"bots":{"x":{}}}`))
-	id2, seeded2, err := Bootstrap(ctx, hc, srv.URL)
+	id2, seeded2, err := Bootstrap(ctx, hc, srv.URL, false)
 	if err != nil || id2 != id || seeded2 {
 		t.Fatalf("not idempotent: %q %v %v", id2, seeded2, err)
 	}
@@ -462,7 +462,7 @@ func TestBootstrapAdoptsLegacyFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, seeded, err := Bootstrap(ctx, hc, srv.URL)
+	got, seeded, err := Bootstrap(ctx, hc, srv.URL, false)
 	if err != nil || got != id {
 		t.Fatalf("adopt legacy: id=%s want=%s seeded=%v err=%v", got, id, seeded, err)
 	}
@@ -485,7 +485,7 @@ func TestBootstrapLostResponseNoDuplicate(t *testing.T) {
 	hc := &http.Client{Transport: authRT{}}
 	ctx := context.Background()
 	fd.postThenFail = 1
-	id, _, err := Bootstrap(ctx, hc, srv.URL)
+	id, _, err := Bootstrap(ctx, hc, srv.URL, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,9 +493,56 @@ func TestBootstrapLostResponseNoDuplicate(t *testing.T) {
 	if len(ids) != 1 || ids[0] != id {
 		t.Fatalf("root folders %v, bootstrap returned %s", ids, id)
 	}
-	id2, _, err := Bootstrap(ctx, hc, srv.URL) // restart
+	id2, _, err := Bootstrap(ctx, hc, srv.URL, false) // restart
 	if err != nil || id2 != id || len(fd.folders("root", RootFolderName)) != 1 {
 		t.Fatalf("rerun %s %v", id2, err)
+	}
+}
+
+func TestBootstrapTestFolder(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	id, seeded, err := Bootstrap(ctx, hc, srv.URL, true)
+	if err != nil || id == "" || !seeded {
+		t.Fatalf("test bootstrap: id=%q seeded=%v err=%v", id, seeded, err)
+	}
+	if fd.files[id].name != TestRootFolderName {
+		t.Fatalf("folder name %q want %q", fd.files[id].name, TestRootFolderName)
+	}
+	if len(fd.folders("root", RootFolderName)) != 0 {
+		t.Fatal("test-folder bootstrap created production botMemory folder")
+	}
+	id2, seeded2, err := Bootstrap(ctx, hc, srv.URL, true)
+	if err != nil || id2 != id || seeded2 {
+		t.Fatalf("test bootstrap not idempotent: %q %v %v", id2, seeded2, err)
+	}
+}
+
+func TestBootstrapTestFolderSkipsProduction(t *testing.T) {
+	fd, _ := newFake(t)
+	srv := httptest.NewServer(fd)
+	defer srv.Close()
+	hc := &http.Client{Transport: authRT{}}
+	ctx := context.Background()
+	prodID, _, err := Bootstrap(ctx, hc, srv.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testID, _, err := Bootstrap(ctx, hc, srv.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if testID == prodID {
+		t.Fatal("test folder id must differ from production")
+	}
+	if len(fd.folders("root", RootFolderName)) != 1 {
+		t.Fatalf("production folder count changed: %v", fd.folders("root", RootFolderName))
+	}
+	if len(fd.folders("root", TestRootFolderName)) != 1 {
+		t.Fatalf("test folder missing: %v", fd.folders("root", TestRootFolderName))
 	}
 }
 

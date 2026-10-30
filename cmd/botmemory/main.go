@@ -34,7 +34,7 @@ const driveScope = "https://www.googleapis.com/auth/drive.file"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: botmemory serve | bootstrap | mint-token BOT_ID | acl grant|revoke|list")
+		fmt.Fprintln(os.Stderr, "usage: botmemory serve | bootstrap [--test-folder] | mint-token BOT_ID | acl grant|revoke|list")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -52,7 +52,7 @@ func main() {
 			log.Fatal(err)
 		}
 	case "bootstrap":
-		if err := bootstrap(context.Background()); err != nil {
+		if err := bootstrap(context.Background(), bootstrapTestFolder(os.Args[2:])); err != nil {
 			log.Fatal(err)
 		}
 	case "serve":
@@ -86,7 +86,7 @@ func backend(ctx context.Context) (store.Backend, error) {
 
 // bootstrap creates (or finds) the app's root folder under drive.file and
 // prints its id. If BOTMEMORY_DRIVE_ROOT_ID is already set it does nothing.
-func bootstrap(ctx context.Context) error {
+func bootstrap(ctx context.Context, testFolder bool) error {
 	if id := env("DRIVE_ROOT_ID"); id != "" {
 		fmt.Printf("BOTMEMORY_DRIVE_ROOT_ID already set (%s); nothing to do\n", id)
 		return nil
@@ -95,15 +95,30 @@ func bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	id, seeded, err := drive.Bootstrap(ctx, hc, "")
+	id, seeded, err := drive.Bootstrap(ctx, hc, "", testFolder)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("BOTMEMORY_DRIVE_ROOT_ID=%s\n", id)
+	if testFolder {
+		fmt.Println("test-folder bootstrap: save this id for smoke/tests only; set BOTMEMORY_SMOKE_TEST_ROOT=1 when using scripts/smoke_drive.py against it")
+	}
 	if seeded {
 		fmt.Println("seeded empty _acl.json (deny all); add bots with `botmemory mint-token`")
 	}
 	return nil
+}
+
+// bootstrapTestFolder is true when --test-folder is passed (wins) or
+// BOTMEMORY_TEST_FOLDER is a truthy value (1/true/yes, case-insensitive).
+func bootstrapTestFolder(args []string) bool {
+	for _, a := range args {
+		if a == "--test-folder" {
+			return true
+		}
+	}
+	v := strings.ToLower(strings.TrimSpace(env("TEST_FOLDER")))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 func driveClient(ctx context.Context) (*http.Client, error) {
