@@ -30,7 +30,6 @@ func TestNormalizeLocalhost(t *testing.T) {
 
 func TestLockPathFixedPerRoot(t *testing.T) {
 	t.Setenv("BOTMEMORY_LOCK_FILE", "")
-	t.Setenv("BOTVAULT_LOCK_FILE", "")
 	a := lockPath("root-A")
 	t.Setenv("TMPDIR", "/elsewhere")
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/999")
@@ -49,21 +48,8 @@ func TestLockPathFixedPerRoot(t *testing.T) {
 	}
 }
 
-func TestEnvLegacyFallback(t *testing.T) {
-	t.Setenv("BOTMEMORY_LOCK_FILE", "")
-	t.Setenv("BOTVAULT_LOCK_FILE", "/legacy.lock")
-	if lockPath("x") != "/legacy.lock" {
-		t.Fatal("BOTVAULT_* fallback ignored")
-	}
-	t.Setenv("BOTMEMORY_LOCK_FILE", "/new.lock")
-	if lockPath("x") != "/new.lock" {
-		t.Fatal("BOTMEMORY_* should win over BOTVAULT_*")
-	}
-}
-
 func TestBootstrapTestFolderEnv(t *testing.T) {
 	t.Setenv("BOTMEMORY_TEST_FOLDER", "")
-	t.Setenv("BOTVAULT_TEST_FOLDER", "")
 	if bootstrapTestFolder(nil) {
 		t.Fatal("empty env should be false")
 	}

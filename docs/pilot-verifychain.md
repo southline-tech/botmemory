@@ -116,8 +116,7 @@ active.
 
 ## Server environment and restart (names only, never values)
 
-`botmemory serve` reads these (via `BOTMEMORY_*`, with legacy `BOTVAULT_*` as a
-deprecated fallback):
+`botmemory serve` reads these (via **`BOTMEMORY_*`**):
 
 | Variable | Needed for | Notes |
 |---|---|---|

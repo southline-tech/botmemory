@@ -102,7 +102,6 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 
 func TestACLLockPath(t *testing.T) {
 	t.Setenv("BOTMEMORY_ACL_LOCK_FILE", "")
-	t.Setenv("BOTVAULT_ACL_LOCK_FILE", "")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // must not matter (R4-1)
 	rt := filepath.Dir(mustUserDir(t))
 	p, err := aclLockPath("someroot")
