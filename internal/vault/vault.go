@@ -39,6 +39,16 @@ const StatusArchived = "archived"
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// NamePattern is the project/key naming regex (document in MCP schemas).
+const NamePattern = `^[a-z0-9][a-z0-9._-]{0,63}$`
+
+// ProjectInfo is one row of list_projects.
+type ProjectInfo struct {
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	Default bool   `json:"default"`
+}
+
 type Record struct {
 	Key       string    `json:"key"`
 	Kind      string    `json:"kind"`
@@ -207,20 +217,37 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	return nil
 }
 
-func (v *Vault) ListProjects(ctx context.Context, bot string) ([]string, error) {
+func (v *Vault) ListProjects(ctx context.Context, bot string) ([]ProjectInfo, error) {
 	names, err := v.b.List(ctx, "projects")
 	if err != nil {
 		return nil, err
 	}
-	out := []string{}
+	onDisk := map[string]bool{}
 	for _, n := range names {
 		if strings.HasSuffix(n, "/") {
-			p := strings.TrimSuffix(n, "/")
-			if v.acl().RoleFor(bot, p) >= acl.Read {
-				out = append(out, p)
+			onDisk[strings.TrimSuffix(n, "/")] = true
+		}
+	}
+	seen := map[string]acl.Role{}
+	for p, r := range v.acl().GrantedProjects(bot) {
+		seen[p] = r
+	}
+	for p := range onDisk {
+		if r := v.acl().RoleFor(bot, p); r >= acl.Read {
+			if _, ok := seen[p]; !ok {
+				seen[p] = r
 			}
 		}
 	}
+	def := v.acl().DefaultProject(bot)
+	out := make([]ProjectInfo, 0, len(seen))
+	for p, r := range seen {
+		if r < acl.Read {
+			continue
+		}
+		out = append(out, ProjectInfo{Name: p, Role: r.String(), Default: p == def && def != ""})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
@@ -241,7 +268,7 @@ func (v *Vault) Get(ctx context.Context, bot, project, key string, version int) 
 	return v.load(ctx, histPath(project, key, version))
 }
 
-func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]Record, error) {
+func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]IndexEntry, error) {
 	if err := validName("project", project); err != nil {
 		return nil, err
 	}
@@ -253,36 +280,26 @@ func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]
 			return nil, err
 		}
 	}
-	out := []Record{}
-	dir := path.Join("projects", project, "records")
-	names, err := v.b.List(ctx, dir)
+	defer v.lock("proj:" + project)()
+	idx, _, err := v.loadIndex(ctx, project, false)
 	if err != nil {
 		return nil, err
 	}
-	{
-		for _, n := range names {
-			if !strings.HasSuffix(n, ".json") {
-				continue
-			}
-			r, err := v.load(ctx, path.Join(dir, n))
-			if err != nil {
-				return nil, err
-			}
-			if f.Status == "" && r.Status == StatusArchived {
-				continue // archived hidden unless asked for
-			}
-			if f.Status != "" && r.Status != f.Status {
-				continue
-			}
-			if f.Kind != "" && r.Kind != f.Kind {
-				continue
-			}
-			if f.Tag != "" && !contains(r.Tags, f.Tag) {
-				continue
-			}
-			r.Body = "" // list is a summary; use get for body
-			out = append(out, *r)
+	out := []IndexEntry{}
+	for _, e := range idx.Entries {
+		if f.Status == "" && e.Status == StatusArchived {
+			continue
 		}
+		if f.Status != "" && e.Status != f.Status {
+			continue
+		}
+		if f.Kind != "" && e.Kind != f.Kind {
+			continue
+		}
+		if f.Tag != "" && !contains(e.Tags, f.Tag) {
+			continue
+		}
+		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
 	return out, nil
@@ -330,8 +347,11 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 	}
 	if prev != nil {
 		next.CreatedBy, next.CreatedAt = prev.CreatedBy, prev.CreatedAt
-		if next.Kind == "" { // omitted kind keeps the previous kind
+		if next.Kind == "" {
 			next.Kind = prev.Kind
+		}
+		if in.IfVersion != nil && *in.IfVersion == curVer && recordSame(prev, next) {
+			return prev, nil
 		}
 	}
 	if err := v.commit(ctx, "put", prev, next, in.Project); err != nil {
@@ -355,6 +375,18 @@ func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Re
 	p := recPath(project, key)
 	defer v.lock(p)()
 	prev, err := v.load(ctx, p)
+	if errors.Is(err, ErrNotFound) {
+		now := v.now()
+		next := &Record{
+			Key: key, Kind: "note", Title: "", Body: text,
+			Tags: []string{}, Links: []string{}, Status: "active",
+			Version: 1, CreatedBy: bot, CreatedAt: now, UpdatedBy: bot, UpdatedAt: now,
+		}
+		if err := v.commit(ctx, "put", nil, next, project); err != nil {
+			return nil, err
+		}
+		return next, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -429,4 +461,10 @@ func nz(xs []string) []string {
 		return []string{}
 	}
 	return xs
+}
+
+func recordSame(a, b *Record) bool {
+	return a.Title == b.Title && a.Body == b.Body && a.Status == b.Status && a.Kind == b.Kind &&
+		strings.Join(a.Tags, "\x00") == strings.Join(b.Tags, "\x00") &&
+		strings.Join(a.Links, "\x00") == strings.Join(b.Links, "\x00")
 }

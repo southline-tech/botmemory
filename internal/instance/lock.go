@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"syscall"
 )
 
 var ErrRunning = errors.New("another botmemory instance holds the lock")
@@ -44,9 +43,8 @@ func SecureDir(dir string) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("%w: %s is not a directory", ErrUnsafeDir, dir)
 	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok || int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("%w: %s is not owned by uid %d", ErrUnsafeDir, dir, os.Getuid())
+	if !dirOwnedByUs(fi) {
+		return fmt.Errorf("%w: %s is not owned by the current user", ErrUnsafeDir, dir)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%w: %s has mode %v (want 0700)", ErrUnsafeDir, dir, fi.Mode().Perm())
@@ -89,7 +87,7 @@ func Acquire(path string) (*Lock, error) {
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: %s is not a regular file", ErrNotLockFile, path)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	f, err := openLockFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("lock file %s: %w", path, err)
 	}
@@ -105,11 +103,8 @@ func Acquire(path string) (*Lock, error) {
 			return nil, fmt.Errorf("%w: %s", ErrNotLockFile, path)
 		}
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := fileLock(f, true); err != nil {
 		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("%w (%s)", ErrRunning, path)
-		}
 		return nil, err
 	}
 	f.Truncate(0)
@@ -118,6 +113,6 @@ func Acquire(path string) (*Lock, error) {
 }
 
 func (l *Lock) Release() error {
-	syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
+	_ = fileUnlock(l.f)
 	return l.f.Close()
 }

@@ -1,6 +1,6 @@
 # Security policy
 
-botMemory is an MCP server for **shared memory and handoff notes**, backed by **Google Drive**. Notes are ordinary Drive files and Docs — **readable to anyone with access to the vault folder**. It is **explicitly not a secrets vault**. Do not store passwords, API keys, OAuth tokens, private keys, payment card numbers, or similar material in botMemory records.
+botMemory is an MCP server for **shared memory and handoff notes**, with **local disk** storage by default and optional **Google Drive**. Notes are ordinary files — **readable on the host** (and on Drive when used). It is **explicitly not a secrets vault**. Do not store passwords, API keys, OAuth tokens, private keys, payment card numbers, or similar material in botMemory records.
 
 ## Supported versions
 
@@ -47,13 +47,14 @@ Include:
 
 1. **Drive-readable notes** — vault content is visible to anyone with Drive access to the root folder. Use a dedicated secrets manager for credentials, not botMemory records.
 2. **Host compromise** — anyone who can run code as the botMemory process (or read its memory/env) can access the vault for that Drive root.
-3. **Multi-host concurrency** — the single-instance lock is **per host**. Running two servers against one Drive root on different hosts is unsupported; Drive has no true compare-and-swap across hosts.
-4. **Instant revocation** — `_acl.json` reloads about every **60 seconds**. After revoke, a token may still work for up to ~60 seconds (and see README/SECURITY notes on fail-closed behavior after repeated ACL load failures).
+3. **Multi-host concurrency** — the single-instance lock is **per host** (Unix: `flock`; Windows: `LockFileEx`). Running two servers against one vault root on different hosts is unsupported.
+4. **Instant revocation** — `_acl.json` reloads about every **60 seconds**.
 
 ### Operational guidance
 
 - Treat raw bot tokens like passwords. Rotate with `botmemory acl grant … --rotate`; revoke via ACL (`revoke` / `remove`).
 - Keep server-side **`BOTMEMORY_OAUTH_*`** credentials on the host only; never commit them; never put them in Drive notes.
+- **Unix:** lock files and ACL token files use `O_NOFOLLOW` on the last path component. **Windows:** those opens do not use `O_NOFOLLOW` — create lock and token paths in directories you control (no untrusted symlinks on the path).
 
 ## Preferred language
 

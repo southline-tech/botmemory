@@ -16,7 +16,7 @@ import (
 )
 
 const aclUsage = `usage:
-  botmemory acl grant <bot> <project> <role> --token-out FILE [--rotate]
+  botmemory acl grant <bot> <project> <role> --token-out FILE [--rotate] [--default-project NAME]
   botmemory acl revoke <bot> [--force]
   botmemory acl remove <bot> [--force]
   botmemory acl list
@@ -31,12 +31,21 @@ entry entirely (same last-owner rule).`
 func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) error {
 	var pos []string
 	tokenOut, rotate, force := "", false, false
+	defaultProj := ""
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--rotate":
 			rotate = true
 		case a == "--force":
 			force = true
+		case a == "--default-project":
+			if i+1 >= len(args) {
+				return errors.New("--default-project needs a name")
+			}
+			i++
+			defaultProj = args[i]
+		case strings.HasPrefix(a, "--default-project="):
+			defaultProj = strings.TrimPrefix(a, "--default-project=")
 		case a == "--token-out":
 			if i+1 >= len(args) {
 				return errors.New("--token-out needs a file path")
@@ -63,7 +72,7 @@ func runACL(ctx context.Context, b store.Backend, args []string, out io.Writer) 
 		if len(pos) != 4 {
 			return errors.New(aclUsage)
 		}
-		r, err := ad.Grant(ctx, pos[1], pos[2], pos[3], acladmin.GrantOpts{TokenOut: tokenOut, Rotate: rotate})
+		r, err := ad.Grant(ctx, pos[1], pos[2], pos[3], acladmin.GrantOpts{TokenOut: tokenOut, Rotate: rotate, DefaultProject: defaultProj})
 		if err != nil {
 			return err
 		}
@@ -165,13 +174,9 @@ func aclMain(args []string) error {
 		return errors.New("BOTMEMORY_ACL_FILE is set: `botmemory acl` edits _acl.json in the vault backend, not a local file; unset it or edit the local file by hand")
 	}
 	ctx := context.Background()
-	b, err := backend(ctx)
+	b, root, err := resolveBackend(ctx, "", "")
 	if err != nil {
 		return err
-	}
-	root := env("DRIVE_ROOT_ID")
-	if env("BACKEND") == "memory" {
-		root = ""
 	}
 	return runACLLocked(ctx, b, root, args, os.Stdout)
 }

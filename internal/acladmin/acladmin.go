@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"syscall"
+	"strings"
 
 	"github.com/southline-tech/botmemory/internal/acl"
 	"github.com/southline-tech/botmemory/internal/store"
@@ -110,6 +110,8 @@ type GrantOpts struct {
 	TokenOut string
 	// Rotate mints a new token for an existing bot (and clears revoked).
 	Rotate bool
+	// DefaultProject sets the bot's default_project (must be granted).
+	DefaultProject string
 }
 
 // GrantResult says what Grant did; it never contains the token.
@@ -185,6 +187,15 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 			b.Roles = map[string]string{}
 		}
 		b.Roles[project] = role
+		if dp := strings.TrimSpace(opts.DefaultProject); dp != "" {
+			if err := acl.ValidProjectName(dp); err != nil {
+				return fmt.Errorf("acladmin: default_project: %w", err)
+			}
+			if _, ok := b.Roles[dp]; !ok {
+				return fmt.Errorf("acladmin: default_project %q is not granted to bot %q", dp, bot)
+			}
+			b.DefaultProject = dp
+		}
 		d.Bots[bot] = b
 		return nil
 	})
@@ -383,7 +394,7 @@ func (a *Admin) List(ctx context.Context) ([]Entry, error) {
 var syncFile = (*os.File).Sync
 
 func writeSecretFile(path, s string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	f, err := openSecretFile(path)
 	if err != nil {
 		return fmt.Errorf("acladmin: token file: %w", err)
 	}
