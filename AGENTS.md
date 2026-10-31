@@ -42,9 +42,9 @@ One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_
 | `search` | Query summaries |
 | `history` | Versions for a key |
 | `stats` | Process call counters (no note content) |
-| `reindex` / `delete` | Owners |
+| `reindex` / `delete` | Owners only (`delete` soft-archives; writers get FORBIDDEN) |
 
-Keys/projects: `^[a-z0-9][a-z0-9._-]{0,63}$`. Kinds: `decision`, `spec`, `handoff`, `assignment`, `note`.
+- **`get` / `history`:** include **archived** records; **`list` / `search`** hide archived unless `status:"archived"`.
 
 ## CLI (same vault)
 

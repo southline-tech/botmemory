@@ -54,6 +54,7 @@ Include:
 
 - Treat raw bot tokens like passwords. Rotate with `botmemory acl grant … --rotate`; revoke via ACL (`revoke` / `remove`).
 - Keep server-side **`BOTMEMORY_OAUTH_*`** credentials on the host only; never commit them; never put them in Drive notes.
+- **Unix:** lock files and ACL token files use `O_NOFOLLOW` on the last path component. **Windows:** those opens do not use `O_NOFOLLOW` — create lock and token paths in directories you control (no untrusted symlinks on the path).
 
 ## Preferred language
 

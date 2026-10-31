@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"syscall"
 )
 
 var ErrRunning = errors.New("another botmemory instance holds the lock")
@@ -88,7 +87,7 @@ func Acquire(path string) (*Lock, error) {
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: %s is not a regular file", ErrNotLockFile, path)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	f, err := openLockFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("lock file %s: %w", path, err)
 	}

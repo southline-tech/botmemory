@@ -3,12 +3,13 @@
 package instance
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
 )
+
+const errorLockViolation syscall.Errno = 33 // windows.ERROR_LOCK_VIOLATION
 
 var (
 	modkernel32      = syscall.NewLazyDLL("kernel32.dll")
@@ -32,7 +33,7 @@ func fileLock(f *os.File, exclusive bool) error {
 		uintptr(unsafe.Pointer(&ol)),
 	)
 	if r1 == 0 {
-		if errno, ok := err.(syscall.Errno); ok && errno == syscall.ERROR_LOCK_VIOLATION {
+		if errno, ok := err.(syscall.Errno); ok && errno == errorLockViolation {
 			return fmt.Errorf("%w (%s)", ErrRunning, f.Name())
 		}
 		return err
@@ -56,7 +57,6 @@ func fileUnlock(f *os.File) error {
 }
 
 func dirOwnedByUs(fi os.FileInfo) bool {
-	// Windows: mode/ownership checks use ACL APIs; SecureDir still enforces 0700-ish perms.
 	_ = fi
 	return true
 }

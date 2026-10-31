@@ -78,6 +78,8 @@ Pass the object below as the tool arguments (exact field names):
 | `reindex` | `{"project":"demo"}` (owner) |
 | `delete` | `{"project":"demo","key":"plan"}` (owner; soft archive) |
 
+**`delete` is owner-only** — writers get `FORBIDDEN`; ask the project owner. **`get` still returns archived records** (soft delete); `list` / `search` omit `status=archived` unless you pass `status:"archived"`. Recover via `get` or `history`.
+
 **Kinds (closed set):** `decision`, `spec`, `handoff`, `assignment`, `note`.
 
 **Projects / keys:** regex `^[a-z0-9][a-z0-9._-]{0,63}$` — unique key per project; `kind` is metadata, not a namespace.
@@ -87,7 +89,7 @@ Pass the object below as the tool arguments (exact field names):
 - Prefer **`handoff`** (or stable keys like `handoff-<topic>`) for turn/context handoffs; include next owner, status, and blockers in the body.
 - Use **`append`** for chronological updates without a version check; use **`put`** + **`if_version`** when replacing structured state.
 - Use **`search`** with `"project":"*"` only when you need every granted project; otherwise name the project.
-- Archived records are hidden from list/search unless you filter with `status:"archived"`.
+- Archived records are hidden from `list`/`search` unless you filter with `status:"archived"`; **`get` and `history` still read archived keys** (soft delete is recoverable).
 
 ### Failure modes
 
@@ -169,7 +171,8 @@ Optional pilot notes: [docs/pilot-verifychain.md](docs/pilot-verifychain.md).
 - **One server process** per Drive root per host.
 - **Not a secrets store** — vault notes are Drive-readable.
 - **Deny-by-default ACL** — no wildcard projects.
-- **Soft delete only** — `delete` / `reindex` require **owner** role.
+- **Soft delete only** — `delete` / `reindex` require **owner** role (writers see `FORBIDDEN`).
+- **Windows:** lock and token files are created without `O_NOFOLLOW`; avoid symlinked paths in untrusted directories (see [SECURITY.md](SECURITY.md)).
 - **No cross-host concurrency guarantee** on the same Drive root.
 
 ## License

@@ -3,15 +3,12 @@ package local
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/southline-tech/botmemory/internal/store"
 )
@@ -73,16 +70,6 @@ func (b *Backend) ReadRev(_ context.Context, path string) ([]byte, string, error
 		return nil, "", err
 	}
 	return data, rev, nil
-}
-
-func fileRev(fi os.FileInfo, path string) (string, error) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		h := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%d", fi.Size(), fi.ModTime().UnixNano(), 0)))
-		return hex.EncodeToString(h[:16]), nil
-	}
-	h := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%d", fi.Size(), fi.ModTime().UnixNano(), st.Ino)))
-	return hex.EncodeToString(h[:16]), nil
 }
 
 func (b *Backend) Write(ctx context.Context, path string, data []byte) error {

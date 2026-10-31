@@ -60,9 +60,31 @@ func migrateMain(args []string) error {
 	if err != nil {
 		return err
 	}
+	paths, err := collectStorePaths(ctx, src, "")
+	if err != nil {
+		return err
+	}
+	if dryRun {
+		var n int
+		for _, p := range paths {
+			data, err := src.Read(ctx, p)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", p, err)
+			}
+			fmt.Fprintf(os.Stdout, "would copy %s (%d bytes)\n", p, len(data))
+			n++
+		}
+		rootID := env("DRIVE_ROOT_ID")
+		if rootID != "" {
+			fmt.Fprintf(os.Stdout, "dry-run: %d files (destination BOTMEMORY_DRIVE_ROOT_ID=%s)\n", n, rootID)
+		} else {
+			fmt.Fprintf(os.Stdout, "dry-run: %d files (set BOTMEMORY_DRIVE_ROOT_ID before real migrate)\n", n)
+		}
+		return nil
+	}
 	rootID := env("DRIVE_ROOT_ID")
 	if rootID == "" {
-		return fmt.Errorf("INVALID: BOTMEMORY_DRIVE_ROOT_ID required for --to drive")
+		return fmt.Errorf("INVALID: BOTMEMORY_DRIVE_ROOT_ID required for migrate (not dry-run)")
 	}
 	hc, err := driveClient(ctx)
 	if err != nil {
@@ -74,20 +96,11 @@ func migrateMain(args []string) error {
 			return err
 		}
 	}
-	paths, err := collectStorePaths(ctx, src, "")
-	if err != nil {
-		return err
-	}
 	var copied int
 	for _, p := range paths {
 		data, err := src.Read(ctx, p)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", p, err)
-		}
-		if dryRun {
-			fmt.Fprintf(os.Stdout, "would copy %s (%d bytes)\n", p, len(data))
-			copied++
-			continue
 		}
 		if _, err := dst.Read(ctx, p); err == nil && !force {
 			return fmt.Errorf("CONFLICT: %s exists on drive; use --force", p)
@@ -96,10 +109,6 @@ func migrateMain(args []string) error {
 			return fmt.Errorf("write %s: %w", p, err)
 		}
 		copied++
-	}
-	if dryRun {
-		fmt.Fprintf(os.Stdout, "dry-run: %d files\n", copied)
-		return nil
 	}
 	fmt.Fprintf(os.Stdout, "migrated %d files local→drive\n", copied)
 	if deleteSrc {

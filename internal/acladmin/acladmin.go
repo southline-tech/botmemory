@@ -16,7 +16,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/southline-tech/botmemory/internal/acl"
 	"github.com/southline-tech/botmemory/internal/store"
@@ -395,7 +394,7 @@ func (a *Admin) List(ctx context.Context) ([]Entry, error) {
 var syncFile = (*os.File).Sync
 
 func writeSecretFile(path, s string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	f, err := openSecretFile(path)
 	if err != nil {
 		return fmt.Errorf("acladmin: token file: %w", err)
 	}
