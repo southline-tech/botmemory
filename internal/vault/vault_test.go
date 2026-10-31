@@ -254,6 +254,11 @@ func TestStoragePreconditionCrossProcess(t *testing.T) {
 	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "new", Title: "t"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("create raced by another process: %v", err)
 	}
+	rb3 := &racingBackend{Memory: store.NewMemory()}
+	v.b = rb3
+	if _, err := v.Append(ctx, "impl", "vc", "k1", "first"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("append create raced by another process: %v", err)
+	}
 }
 
 // Finding 6: a failed record write leaves history consistent and a retry works.
