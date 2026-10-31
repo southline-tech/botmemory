@@ -88,6 +88,7 @@ type Vault struct {
 	dirty sync.Map // project -> bool (true = dirty)
 	// marks holds per-project durable-marker state (see marker.go).
 	marks sync.Map // project -> *markState
+	ic    indexCache
 }
 
 func New(b store.Backend, aclFn func() *acl.ACL) *Vault {

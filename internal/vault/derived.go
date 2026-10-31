@@ -160,12 +160,21 @@ func (v *Vault) nextLogSeg(ctx context.Context, project string) (int, error) {
 // time). rebuilt reports whether it came from records. Caller must hold the
 // project lock.
 func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (idx *Index, rebuilt bool, err error) {
+	if !rebuild {
+		if idx, ok := v.ic.get(v.now(), project); ok {
+			if !v.isDirty(ctx, project) {
+				return idx, false, nil
+			}
+			v.dropIndexCache(project)
+		}
+	}
 	if !rebuild && !v.isDirty(ctx, project) {
 		data, err := v.b.Read(ctx, indexPath(project))
 		if err == nil {
 			var idx Index
 			if json.Unmarshal(data, &idx) == nil && idx.Entries != nil {
-				return &idx, false, nil
+				v.putIndexCache(project, &idx)
+				return cloneIndex(&idx), false, nil
 			}
 			log.Printf("botmemory: %s: corrupt index; rebuilding from records", project)
 		} else if !errors.Is(err, store.ErrNotFound) {
@@ -182,8 +191,10 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (id
 		log.Printf("botmemory: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
 	} else if err := v.clearDirty(ctx, project); err != nil {
 		log.Printf("botmemory: %s: %v (will rebuild again)", project, err)
+	} else {
+		v.putIndexCache(project, idx)
 	}
-	return idx, true, nil
+	return cloneIndex(idx), true, nil
 }
 
 // rebuildIndex builds an index from records. Only records that exist but
@@ -225,7 +236,11 @@ func (v *Vault) rebuildIndex(ctx context.Context, project string) (*Index, []str
 
 func (v *Vault) saveIndex(ctx context.Context, project string, idx *Index) error {
 	b, _ := json.MarshalIndent(idx, "", "  ")
-	return v.b.Write(ctx, indexPath(project), b)
+	if err := v.b.Write(ctx, indexPath(project), b); err != nil {
+		return err
+	}
+	v.putIndexCache(project, idx)
+	return nil
 }
 
 // Reindex rebuilds a project's _index.json from its records. Owners only.
