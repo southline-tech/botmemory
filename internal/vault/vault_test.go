@@ -171,12 +171,14 @@ func TestDeleteArchivesOnly(t *testing.T) {
 
 func TestAppend(t *testing.T) {
 	v, _ := newVault(t)
-	if _, err := v.Append(ctx, "impl", "vc", "k1", "x"); !errors.Is(err, ErrNotFound) {
-		t.Fatal(err)
+	created, err := v.Append(ctx, "impl", "vc", "k1", "first entry")
+	if err != nil || created.Kind != "note" || created.Title != "" || created.Body != "first entry" ||
+		created.Version != 1 || created.Status != "active" || created.CreatedBy != "impl" ||
+		created.UpdatedBy != "impl" || !created.CreatedAt.Equal(created.UpdatedAt) {
+		t.Fatalf("missing-key append did not create an attributed note: %+v %v", created, err)
 	}
-	put(v, "pm", nil, "start")
 	r, err := v.Append(ctx, "impl", "vc", "k1", "more")
-	if err != nil || r.Version != 2 || r.UpdatedBy != "impl" || !strings.Contains(r.Body, "— impl, ") || !strings.HasSuffix(r.Body, "more\n") || !strings.HasPrefix(r.Body, "start") {
+	if err != nil || r.Version != 2 || r.UpdatedBy != "impl" || !strings.Contains(r.Body, "— impl, ") || !strings.HasSuffix(r.Body, "more\n") || !strings.HasPrefix(r.Body, "first entry") {
 		t.Fatalf("%+v %v", r, err)
 	}
 	if _, err := v.Append(ctx, "ro", "vc", "k1", "x"); !errors.Is(err, ErrForbidden) {
