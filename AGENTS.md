@@ -30,7 +30,7 @@ Paste this into bot rules when connecting to a local botMemory MCP server.
 | `list` | Summaries in one project |
 | `get` | One record (optional `version` for history) |
 | `put` | Create/update (create without `if_version`; update needs current version) |
-| `append` | Append text to a body (key must exist) |
+| `append` | Append text to a body; missing keys create notes |
 | `search` | Full-text search (`project:"*"` = all granted projects) |
 | `history` | Version list for a key |
 | `reindex` | Rebuild index (owners) |
@@ -50,7 +50,7 @@ Full `tools/call` argument examples: [README — For agents](README.md#for-agent
 - `401` / bad token: stop; do not mint or rotate tokens yourself — owner uses `botmemory acl grant … --rotate`. Revokes can take up to ~60s to apply.
 - `FORBIDDEN`: you lack that project — ask the owner; do not probe other projects.
 - `CONFLICT` on `put`: `get`, then retry once with correct `if_version`; escalate if still conflicting.
-- `NOT_FOUND` on `append`: create with `put` first.
+- `append` on a missing key creates a `note` with the supplied text as its initial body.
 
 ## Never
 
