@@ -340,8 +340,9 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 	return next, nil
 }
 
-// Append adds text to an existing record's body without a version check
-// (spec: lock-free for callers; serialized server-side by the per-key lock).
+// Append adds text to a record's body without a version check. If the key
+// does not exist, it creates a note with text as the initial body. Writes are
+// serialized server-side by the per-key lock.
 func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Record, error) {
 	if err := v.checkAddr(project, key); err != nil {
 		return nil, err
@@ -355,14 +356,25 @@ func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Re
 	p := recPath(project, key)
 	defer v.lock(p)()
 	prev, err := v.load(ctx, p)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
+	}
+	now := v.now()
+	if prev == nil {
+		next := &Record{
+			Key: key, Kind: "note", Title: "", Body: text,
+			Tags: []string{}, Links: [], Status: "active", Version: 1,
+			CreatedBy: bot, UpdatedBy: bot, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := v.commit(ctx, "append", nil, next, project); err != nil {
+			return nil, err
+		}
+		return next, nil
 	}
 	if prev.Status == StatusArchived {
 		return nil, fmt.Errorf("%w: record is archived", ErrConflict)
 	}
 	next := *prev
-	now := v.now()
 	sep := ""
 	if next.Body != "" && !strings.HasSuffix(next.Body, "\n") {
 		sep = "\n"
