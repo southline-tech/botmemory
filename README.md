@@ -61,7 +61,7 @@ Pass the object below as the tool arguments (exact field names):
 - **`401` / token rejected:** stop; do not mint or rotate tokens. Owner checks ACL / runs `botmemory acl grant … --rotate`. After revoke, deny may take up to **~60s**.
 - **`FORBIDDEN`:** no grant for that project — ask the owner; do not spam other projects.
 - **`CONFLICT` on `put`:** `get` the record, retry **once** with the correct `if_version`; if still conflicting, escalate (another writer).
-- **`NOT_FOUND` on `append`:** create the key with **`put`** first.
+- **`append` on a missing key:** creates a `note` with the supplied text as its initial body (version 1).
 - Never print bearer tokens, OAuth values, or raw ACL hashes in chat, logs, or issues.
 
 ---
