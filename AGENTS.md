@@ -1,57 +1,75 @@
 # botMemory — agent rules card
 
-Paste this into bot rules when connecting to a local botMemory MCP server.
+Paste into bot rules when using botMemory MCP (HTTP or stdio).
 
 ## What it is (and is not)
 
-**botMemory** is shared, attributable **handoff notes** for agent fleets (decisions, specs, assignments, handoffs). Data lives in **Google Drive** as ordinary files — **readable to anyone with vault-folder access**. It is **not a secrets store**. Never put passwords, API keys, OAuth tokens, private keys, or card numbers in records. See [SECURITY.md](SECURITY.md).
+**botMemory** is shared, attributable **handoff notes** for agent fleets. Default storage is **local disk**; optional **Google Drive**. Content is **not encrypted secrets** — treat vault data as readable on the host (and on Drive if used). Never store passwords, API keys, OAuth tokens, or private keys in records. See [SECURITY.md](SECURITY.md).
 
-## Connect
+## Connect (HTTP)
 
-- URL: `http://127.0.0.1:8787/mcp` (loopback; `POST` only)
-- Header: `Authorization: Bearer <token>` — load the token from a mode-`0600` file at process launch; never commit or paste tokens in chat, logs, or issues.
+- URL: `http://127.0.0.1:8787/mcp` (`POST` only)
+- Header: `Authorization: Bearer <token>` from a mode-`0600` file at launch
+
+## Connect (stdio)
+
+One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_TOKEN_FILE`. Optional `BOTMEMORY_PROJECT` or ACL `default_project` so you can omit `project` on tools.
 
 ```json
 {
   "mcpServers": {
     "botmemory": {
-      "url": "http://127.0.0.1:8787/mcp",
-      "headers": { "Authorization": "Bearer ${BOTMEMORY_TOKEN}" }
+      "command": "/path/to/botmemory",
+      "args": ["stdio"],
+      "env": {
+        "BOTMEMORY_TOKEN_FILE": "/secure/bot.token",
+        "BOTMEMORY_BACKEND": "local"
+      }
     }
   }
 }
 ```
 
-## Tools (names)
+## Tools
 
 | Tool | Use |
 |------|-----|
-| `list_projects` | Projects your token may access |
-| `list` | Summaries in one project |
-| `get` | One record (optional `version` for history) |
-| `put` | Create/update (create without `if_version`; update needs current version) |
-| `append` | Append text to a body (key must exist) |
-| `search` | Full-text search (`project:"*"` = all granted projects) |
-| `history` | Version list for a key |
-| `reindex` | Rebuild index (owners) |
-| `delete` | Soft archive (owners) |
+| `list_projects` | Granted projects (`default` flag when set) |
+| `list` | **Call before get** — summaries only |
+| `get` | Full record |
+| `put` | Create/update; matching `if_version` + unchanged fields = no-op |
+| `append` | Append text; **creates** missing key as `note` |
+| `search` | Query summaries |
+| `history` | Versions for a key |
+| `stats` | Process call counters (no note content) |
+| `reindex` / `delete` | Owners |
 
-Full `tools/call` argument examples: [README — For agents](README.md#for-agents).
+Keys/projects: `^[a-z0-9][a-z0-9._-]{0,63}$`. Kinds: `decision`, `spec`, `handoff`, `assignment`, `note`.
 
-## Conventions
+## CLI (same vault)
 
-- **Projects / keys:** `^[a-z0-9][a-z0-9._-]{0,63}$` (lowercase; unique key per project).
-- **Kinds (closed set):** `decision`, `spec`, `handoff`, `assignment`, `note` — prefer `handoff` for turn/context handoffs; use stable keys like `handoff` or `handoff-<topic>`.
-- **Handoffs:** put context, owner, status, blockers in the body; use `append` for chronological updates; use `put` + `if_version` when replacing structured state.
+```sh
+export BOTMEMORY_TOKEN_FILE=/secure/bot.token
+export BOTMEMORY_PROJECT=demo
+botmemory list
+botmemory put plan --title T --body B --kind spec
+botmemory append log --text "- item"
+```
 
-## Failure policy
+Compact JSON stdout; errors `CODE: …; hint: …` on stderr.
 
-- Server down / connection refused / timeout: **do not tight-loop retry** — tell the human operator once and wait.
-- `401` / bad token: stop; do not mint or rotate tokens yourself — owner uses `botmemory acl grant … --rotate`. Revokes can take up to ~60s to apply.
-- `FORBIDDEN`: you lack that project — ask the owner; do not probe other projects.
-- `CONFLICT` on `put`: `get`, then retry once with correct `if_version`; escalate if still conflicting.
-- `NOT_FOUND` on `append`: create with `put` first.
+## Habits
 
-## Never
+- **Orient** with `list` or `search`, not a hand-maintained index key.
+- **Append** chronological logs; **put** + `if_version` for structured replacements.
+- **One write** at end of turn when possible.
+- **Never** paste tokens or note bodies containing secrets.
 
-Paste bearer tokens, OAuth values, or ACL hashes in messages or tickets.
+## Failures
+
+- Down/timeout: report once; no tight retry loops.
+- `FORBIDDEN`: ask owner for `acl grant`.
+- `CONFLICT`: `get`, retry `put` once with `if_version`.
+- `NOT_FOUND` on `get`: `put` or `append` (append creates).
+
+Example flows: [docs/examples-multi-agent.md](docs/examples-multi-agent.md).

@@ -308,7 +308,10 @@ func (v *Vault) Search(ctx context.Context, bot, project, query string, f ListFi
 		if err != nil {
 			return nil, err
 		}
-		projects = ps
+		projects = make([]string, len(ps))
+		for i, p := range ps {
+			projects[i] = p.Name
+		}
 	} else {
 		if err := validName("project", project); err != nil {
 			return nil, err

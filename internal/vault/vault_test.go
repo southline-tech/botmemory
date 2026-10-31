@@ -171,10 +171,10 @@ func TestDeleteArchivesOnly(t *testing.T) {
 
 func TestAppend(t *testing.T) {
 	v, _ := newVault(t)
-	if _, err := v.Append(ctx, "impl", "vc", "k1", "x"); !errors.Is(err, ErrNotFound) {
-		t.Fatal(err)
+	r0, err := v.Append(ctx, "impl", "vc", "k1", "start")
+	if err != nil || r0.Version != 1 || r0.Kind != "note" {
+		t.Fatalf("append create: %+v %v", r0, err)
 	}
-	put(v, "pm", nil, "start")
 	r, err := v.Append(ctx, "impl", "vc", "k1", "more")
 	if err != nil || r.Version != 2 || r.UpdatedBy != "impl" || !strings.Contains(r.Body, "— impl, ") || !strings.HasSuffix(r.Body, "more\n") || !strings.HasPrefix(r.Body, "start") {
 		t.Fatalf("%+v %v", r, err)
@@ -193,8 +193,17 @@ func TestListAndProjects(t *testing.T) {
 		t.Fatal("key must be unique per project across kinds", err)
 	}
 	l, err := v.List(ctx, "ro", "vc", ListFilter{})
-	if err != nil || len(l) != 2 || l[0].Key != "b" || l[1].Body != "" {
+	if err != nil || len(l) != 2 || l[0].Key != "b" {
 		t.Fatalf("%+v %v", l, err)
+	}
+	var sumA string
+	for _, e := range l {
+		if e.Key == "a" {
+			sumA = e.Summary
+		}
+	}
+	if sumA != "bodyA" {
+		t.Fatalf("summary for a: %q", sumA)
 	}
 	if l, _ := v.List(ctx, "ro", "vc", ListFilter{Tag: "m1"}); len(l) != 1 || l[0].Key != "a" {
 		t.Fatal(l)
@@ -205,10 +214,10 @@ func TestListAndProjects(t *testing.T) {
 	if _, err := v.List(ctx, "ro", "vc", ListFilter{Kind: "bogus"}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
-	if p, _ := v.ListProjects(ctx, "ro"); len(p) != 1 || p[0] != "vc" {
+	if p, _ := v.ListProjects(ctx, "ro"); len(p) != 1 || p[0].Name != "vc" {
 		t.Fatal("ro projects", p)
 	}
-	if p, _ := v.ListProjects(ctx, "grok"); len(p) != 2 {
+	if p, _ := v.ListProjects(ctx, "grok"); len(p) != 3 {
 		t.Fatal("grok projects", p)
 	}
 }

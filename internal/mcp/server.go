@@ -7,7 +7,6 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,8 +18,9 @@ import (
 const protocolVersion = "2025-06-18"
 
 type Server struct {
-	V   *vault.Vault
-	ACL func() *acl.ACL
+	V       *vault.Vault
+	ACL     func() *acl.ACL
+	Version string
 }
 
 type rpcReq struct {
@@ -98,7 +98,7 @@ func (s *Server) dispatch(r *http.Request, bot string, req rpcReq) (any, *rpcErr
 		return map[string]any{
 			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "botmemory", "version": "0.1.0-m1"},
+			"serverInfo":      map[string]any{"name": "botmemory", "version": s.serverVersion()},
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -121,24 +121,24 @@ func (s *Server) dispatch(r *http.Request, bot string, req rpcReq) (any, *rpcErr
 	return nil, &rpcErr{-32601, "method not found: " + req.Method}
 }
 
+func (s *Server) serverVersion() string {
+	if s.Version != "" {
+		return s.Version
+	}
+	return "dev"
+}
+
+func compactJSON(v any) ([]byte, error) {
+	return json.Marshal(v)
+}
+
 // toolResult renders tool errors in-band (isError) with a stable code prefix
 // so bots can branch on CONFLICT / FORBIDDEN / NOT_FOUND / INVALID.
 func toolResult(out any, err error) map[string]any {
 	if err != nil {
-		code := "INTERNAL"
-		switch {
-		case errors.Is(err, vault.ErrConflict):
-			code = "CONFLICT"
-		case errors.Is(err, vault.ErrForbidden):
-			code = "FORBIDDEN"
-		case errors.Is(err, vault.ErrNotFound):
-			code = "NOT_FOUND"
-		case errors.Is(err, vault.ErrInvalid):
-			code = "INVALID"
-		}
-		return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("%s: %v", code, err)}}}
+		return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": formatToolErr(err)}}}
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
+	b, _ := compactJSON(out)
 	return map[string]any{
 		"content":           []any{map[string]any{"type": "text", "text": string(b)}},
 		"structuredContent": map[string]any{"result": out},

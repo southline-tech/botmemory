@@ -34,10 +34,19 @@ const driveScope = "https://www.googleapis.com/auth/drive.file"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: botmemory serve | bootstrap [--test-folder] | mint-token BOT_ID | acl grant|revoke|list")
+		fmt.Fprintln(os.Stderr, "usage: botmemory serve | stdio | migrate | projects|list|get|… | bootstrap | mint-token | acl …")
 		os.Exit(2)
 	}
-	switch os.Args[1] {
+	cmd := os.Args[1]
+	if isBotCommand(cmd) {
+		if err := runBotCommand(cmd, os.Args[2:]); err != nil {
+			if errors.Is(err, errBotUsage) {
+				os.Exit(2)
+			}
+		}
+		return
+	}
+	switch cmd {
 	case "mint-token":
 		if len(os.Args) != 3 {
 			log.Fatal("usage: botmemory mint-token BOT_ID")
@@ -55,33 +64,88 @@ func main() {
 		if err := bootstrap(context.Background(), bootstrapTestFolder(os.Args[2:])); err != nil {
 			log.Fatal(err)
 		}
+	case "migrate":
+		if err := migrateMain(os.Args[2:]); err != nil {
+			if errors.Is(err, errUsage) {
+				os.Exit(2)
+			}
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
 	case "serve":
-		if err := serve(); err != nil {
+		storage, dataDir := "", ""
+		for i := 2; i < len(os.Args); i++ {
+			switch os.Args[i] {
+			case "--storage":
+				i++
+				if i < len(os.Args) {
+					storage = os.Args[i]
+				}
+			case "--data-dir":
+				i++
+				if i < len(os.Args) {
+					dataDir = os.Args[i]
+				}
+			}
+		}
+		if err := runServer(false, storage, dataDir); err != nil {
+			log.Fatal(err)
+		}
+	case "stdio":
+		if err := runServer(true, "", ""); err != nil {
 			log.Fatal(err)
 		}
 	default:
-		log.Fatalf("unknown command %q", os.Args[1])
+		log.Fatalf("unknown command %q", cmd)
 	}
 }
 
-func backend(ctx context.Context) (store.Backend, error) {
-	switch env("BACKEND") {
-	case "memory":
-		log.Print("WARNING: memory backend; data is lost on exit")
-		return store.NewMemory(), nil
-	case "", "drive":
-	default:
-		return nil, errors.New("BOTMEMORY_BACKEND must be drive or memory")
-	}
-	root := env("DRIVE_ROOT_ID")
-	if root == "" {
-		return nil, errors.New("BOTMEMORY_DRIVE_ROOT_ID is required for the drive backend (run `botmemory bootstrap` to create one)")
-	}
-	hc, err := driveClient(ctx)
+func runServer(stdio bool, storageFlag, dataDirFlag string) error {
+	ctx := context.Background()
+	b, rootKey, err := resolveBackend(ctx, storageFlag, dataDirFlag)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return drive.New(hc, root), nil
+	if env("ACL_FILE") == "" && env("DRIVE_ROOT_ID") == "" && strings.ToLower(env("BACKEND")) != "drive" {
+		if err := seedLocalACL(ctx, b); err != nil && !errors.Is(err, store.ErrPrecondition) {
+			return fmt.Errorf("seed ACL: %w", err)
+		}
+	}
+	loader := &acl.Loader{MaxFailures: 5, Fetch: func() ([]byte, error) {
+		return aclBytes(ctx, b)
+	}}
+	if err := loader.Load(); err != nil {
+		return fmt.Errorf("load ACL: %w", err)
+	}
+	go loader.Run(60*time.Second, nil)
+	aclFn := loader.Current
+	v := vault.New(b, aclFn)
+	warmStorage(ctx, b, aclFn)
+	srv := &mcp.Server{V: v, ACL: aclFn, Version: Version}
+	if stdio {
+		return runStdio(srv)
+	}
+	addr := env("ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8787"
+	}
+	addr = normalizeAddr(addr)
+	if err := checkAddr(addr); err != nil {
+		return err
+	}
+	lp := lockPath(rootKey)
+	log.Printf("botmemory single-instance lock: %s", lp)
+	lk, err := instance.Acquire(lp)
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", srv)
+	log.Printf("botmemory listening on http://%s/mcp", addr)
+	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
+	return hs.ListenAndServe()
 }
 
 // bootstrap creates (or finds) the app's root folder under drive.file and
@@ -176,50 +240,4 @@ func rootHash(rootID string) string {
 	}
 	sum := sha256.Sum256([]byte(rootID))
 	return hex.EncodeToString(sum[:])[:12]
-}
-
-func serve() error {
-	ctx := context.Background()
-	addr := env("ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8787"
-	}
-	addr = normalizeAddr(addr)
-	if err := checkAddr(addr); err != nil {
-		return err
-	}
-	root := env("DRIVE_ROOT_ID")
-	if env("BACKEND") == "memory" {
-		root = ""
-	}
-	lp := lockPath(root)
-	log.Printf("botmemory single-instance lock: %s", lp)
-	lk, err := instance.Acquire(lp)
-	if err != nil {
-		return err
-	}
-	defer lk.Release()
-	b, err := backend(ctx)
-	if err != nil {
-		return err
-	}
-	// ACL: _acl.json in the vault root (Drive), or BOTMEMORY_ACL_FILE locally.
-	// Reloaded every 60s; fails closed after 5 consecutive failures.
-	loader := &acl.Loader{MaxFailures: 5, Fetch: func() ([]byte, error) {
-		if f := env("ACL_FILE"); f != "" {
-			return os.ReadFile(f)
-		}
-		return b.Read(ctx, "_acl.json")
-	}}
-	if err := loader.Load(); err != nil {
-		return fmt.Errorf("load ACL: %w", err)
-	}
-	go loader.Run(60*time.Second, nil)
-	aclFn := loader.Current
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", &mcp.Server{V: vault.New(b, aclFn), ACL: aclFn})
-	log.Printf("botmemory listening on http://%s/mcp", addr)
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
-	return srv.ListenAndServe()
 }

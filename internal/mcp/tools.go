@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"time"
-
 	"github.com/southline-tech/botmemory/internal/vault"
+	"net/http"
+	"strings"
+	"time"
 )
 
 var errUnknownTool = errors.New("unknown tool")
@@ -33,46 +33,122 @@ type args struct {
 	Limit     int      `json:"limit"`
 }
 
+func (s *Server) resolveProject(bot, project string) (string, error) {
+	project = strings.TrimSpace(project)
+	if project != "" {
+		return project, nil
+	}
+	if dp := s.ACL().DefaultProject(bot); dp != "" {
+		return dp, nil
+	}
+	return "", fmt.Errorf("%w: project required; set ACL default_project or pass project", vault.ErrInvalid)
+}
+
 func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (any, error) {
+	start := time.Now()
 	var a args
 	if len(raw) > 0 {
 		dec := json.NewDecoder(bytesReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&a); err != nil {
-			return nil, fmt.Errorf("%w: %v", vault.ErrInvalid, err)
+			err = fmt.Errorf("%w: %v", vault.ErrInvalid, err)
+			RecordCall(bot, name, a.Project, a.Key, time.Since(start).Milliseconds(), false, errCode(err))
+			return nil, err
 		}
 	}
-	// Every tool call gets a deadline inside the HTTP server's 60s
-	// WriteTimeout; Drive requests and retry sleeps all honour ctx.
 	ctx, cancel := context.WithTimeout(r.Context(), CallTimeout)
 	defer cancel()
+	var (
+		out any
+		err error
+	)
 	switch name {
 	case "list_projects":
-		return s.V.ListProjects(ctx, bot)
+		out, err = s.V.ListProjects(ctx, bot)
+	case "stats":
+		out = Snapshot()
 	case "list":
-		return s.V.List(ctx, bot, a.Project, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status})
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.List(ctx, bot, p, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status})
 	case "get":
-		return s.V.Get(ctx, bot, a.Project, a.Key, a.Version)
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.Get(ctx, bot, p, a.Key, a.Version)
 	case "put":
-		return s.V.Put(ctx, bot, vault.PutInput{Project: a.Project, Kind: a.Kind, Key: a.Key,
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.Put(ctx, bot, vault.PutInput{Project: p, Kind: a.Kind, Key: a.Key,
 			Title: a.Title, Body: a.Body, Status: a.Status, Tags: a.Tags, Links: a.Links, IfVersion: a.IfVersion})
 	case "append":
-		return s.V.Append(ctx, bot, a.Project, a.Key, a.Text)
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.Append(ctx, bot, p, a.Key, a.Text)
 	case "search":
-		return s.V.Search(ctx, bot, a.Project, a.Query, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status}, a.Limit)
+		p := strings.TrimSpace(a.Project)
+		if p == "" {
+			err = fmt.Errorf("%w: project required (use \"*\" for all granted)", vault.ErrInvalid)
+			break
+		}
+		out, err = s.V.Search(ctx, bot, p, a.Query, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status}, a.Limit)
 	case "history":
-		return s.V.History(ctx, bot, a.Project, a.Key)
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.History(ctx, bot, p, a.Key)
 	case "reindex":
-		n, skipped, err := s.V.Reindex(ctx, bot, a.Project)
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		n, skipped, e := s.V.Reindex(ctx, bot, p)
 		if skipped == nil {
 			skipped = []string{}
 		}
-		return map[string]any{"entries": n, "skipped": skipped}, err
+		out, err = map[string]any{"entries": n, "skipped": skipped}, e
 	case "delete":
-		return s.V.Delete(ctx, bot, a.Project, a.Key, a.IfVersion)
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.Delete(ctx, bot, p, a.Key, a.IfVersion)
+	default:
+		err = fmt.Errorf("%w: %s", errUnknownTool, name)
 	}
-	return nil, fmt.Errorf("%w: %s", errUnknownTool, name)
+	code := ""
+	ok := err == nil
+	if !ok {
+		code = errCode(err)
+	}
+	RecordCall(bot, name, a.Project, a.Key, time.Since(start).Milliseconds(), ok, code)
+	return out, err
 }
+
+// CallTool runs one MCP tool (HTTP or stdio).
+func (s *Server) CallTool(ctx context.Context, bot, name string, raw json.RawMessage) map[string]any {
+	r, _ := http.NewRequestWithContext(ctx, "POST", "http://127.0.0.1/mcp", nil)
+	out, err := s.call(r, bot, name, raw)
+	return toolResult(out, err)
+}
+
+// ToolDefs returns MCP tool metadata.
+func ToolDefs() []map[string]any { return toolDefs }
 
 func obj(props map[string]any, required ...string) map[string]any {
 	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
@@ -83,7 +159,9 @@ var (
 	strs     = map[string]any{"type": "array", "items": str}
 	integer  = map[string]any{"type": "integer", "minimum": 0}
 	kindProp = map[string]any{"type": "string", "enum": vault.Kinds}
-	addr     = map[string]any{"project": str, "key": str}
+	proj     = map[string]any{"type": "string", "pattern": vault.NamePattern, "description": "project slug; omit if ACL default_project is set"}
+	key      = map[string]any{"type": "string", "pattern": vault.NamePattern, "description": "record key within project"}
+	addr     = map[string]any{"project": proj, "key": key}
 )
 
 func with(base map[string]any, extra map[string]any) map[string]any {
@@ -98,21 +176,22 @@ func with(base map[string]any, extra map[string]any) map[string]any {
 }
 
 var toolDefs = []map[string]any{
-	{"name": "list_projects", "description": "List projects your token is explicitly granted (deny by default).", "inputSchema": obj(map[string]any{})},
-	{"name": "list", "description": "List record summaries (no body) in a project, newest first. Archived records are hidden unless status=archived.",
-		"inputSchema": obj(map[string]any{"project": str, "kind": kindProp, "tag": str, "status": str}, "project")},
-	{"name": "get", "description": "Get a record; version>0 fetches a prior version from history.",
-		"inputSchema": obj(with(addr, map[string]any{"version": integer}), "project", "key")},
-	{"name": "put", "description": "Create or update a record (keys are unique per project; kind is optional metadata). Without if_version (or 0) it only creates; updating requires if_version = current version, else CONFLICT. Author is taken from your token.",
-		"inputSchema": obj(with(addr, map[string]any{"kind": kindProp, "title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "project", "key", "title")},
-	{"name": "append", "description": "Append text to a record's body without a version check; stamped with your bot id and time.",
-		"inputSchema": obj(with(addr, map[string]any{"text": str}), "project", "key", "text")},
-	{"name": "search", "description": "Search the index (key, kind, title, tags, first 500 chars of body); all terms must match. project=\"*\" searches every project you can read. Archived hidden unless status=archived.",
+	{"name": "list_projects", "description": "List granted projects (name, role, default flag). Includes granted projects with no records yet.", "inputSchema": obj(map[string]any{})},
+	{"name": "stats", "description": "Process call counters (no note content). Counts by tool, bot, and error code.", "inputSchema": obj(map[string]any{})},
+	{"name": "list", "description": "Call list before get. Returns index summaries (title, summary, tags); not full bodies.",
+		"inputSchema": obj(map[string]any{"project": proj, "kind": kindProp, "tag": str, "status": str})},
+	{"name": "get", "description": "Get a record body; version>0 fetches history.",
+		"inputSchema": obj(with(addr, map[string]any{"version": integer}), "key")},
+	{"name": "put", "description": "Create or update. Without if_version only creates; update needs matching if_version. Identical update is a no-op.",
+		"inputSchema": obj(with(addr, map[string]any{"kind": kindProp, "title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "key", "title")},
+	{"name": "append", "description": "Append text; creates missing key as kind=note (v1).",
+		"inputSchema": obj(with(addr, map[string]any{"text": str}), "key", "text")},
+	{"name": "search", "description": "Search summaries; project=\"*\" searches all granted projects.",
 		"inputSchema": obj(map[string]any{"project": str, "query": str, "kind": kindProp, "tag": str, "status": str, "limit": integer}, "project", "query")},
-	{"name": "history", "description": "List every version of a key (newest first) with author and time; fetch one with get(version=N).",
-		"inputSchema": obj(addr, "project", "key")},
-	{"name": "reindex", "description": "Rebuild a project's search index from its records. Project owners only. Returns entries and any skipped (unparseable) record files.",
-		"inputSchema": obj(map[string]any{"project": str}, "project")},
-	{"name": "delete", "description": "Soft delete: marks the record archived (new version, history kept). Project owners only.",
-		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "project", "key")},
+	{"name": "history", "description": "List versions for a key (newest first).",
+		"inputSchema": obj(addr, "key")},
+	{"name": "reindex", "description": "Rebuild search index (owners only).",
+		"inputSchema": obj(map[string]any{"project": proj})},
+	{"name": "delete", "description": "Soft archive (owners only).",
+		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "key")},
 }

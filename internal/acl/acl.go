@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,9 +52,10 @@ func (r Role) String() string {
 // Bot is one ACL entry. Roles maps project -> role. Deny by default: a bot
 // has no access to any project not listed explicitly (no wildcard).
 type Bot struct {
-	TokenSHA256 string            `json:"token_sha256"`
-	Revoked     bool              `json:"revoked,omitempty"`
-	Roles       map[string]string `json:"roles"`
+	TokenSHA256    string            `json:"token_sha256"`
+	Revoked        bool              `json:"revoked,omitempty"`
+	Roles          map[string]string `json:"roles"`
+	DefaultProject string            `json:"default_project,omitempty"`
 }
 
 // Doc is the on-disk _acl.json shape.
@@ -64,8 +67,9 @@ var ErrUnauthorized = errors.New("acl: invalid or revoked token")
 
 // ACL is an immutable, validated view of a Doc.
 type ACL struct {
-	bots  map[string]Bot
-	roles map[string]map[string]Role
+	bots        map[string]Bot
+	roles       map[string]map[string]Role
+	defaultProj map[string]string
 }
 
 func Parse(data []byte) (*ACL, error) {
@@ -73,7 +77,7 @@ func Parse(data []byte) (*ACL, error) {
 	if err := json.Unmarshal(data, &d); err != nil {
 		return nil, fmt.Errorf("acl: %w", err)
 	}
-	a := &ACL{bots: d.Bots, roles: map[string]map[string]Role{}}
+	a := &ACL{bots: d.Bots, roles: map[string]map[string]Role{}, defaultProj: map[string]string{}}
 	seen := map[string]string{}
 	for id, b := range d.Bots {
 		if !botIDRE.MatchString(id) {
@@ -96,6 +100,15 @@ func Parse(data []byte) (*ACL, error) {
 				return nil, fmt.Errorf("acl: bot %q: %w", id, err)
 			}
 			m[p] = r
+		}
+		if dp := strings.TrimSpace(b.DefaultProject); dp != "" {
+			if err := validProjectName(dp); err != nil {
+				return nil, fmt.Errorf("acl: bot %q: default_project: %w", id, err)
+			}
+			if _, ok := m[dp]; !ok {
+				return nil, fmt.Errorf("acl: bot %q: default_project %q is not granted", id, dp)
+			}
+			a.defaultProj[id] = dp
 		}
 		a.roles[id] = m
 	}
@@ -125,6 +138,46 @@ func (a *ACL) RoleFor(bot, project string) Role {
 	return a.roles[bot][project]
 }
 
+// DefaultProject returns the bot's optional default project name.
+func (a *ACL) DefaultProject(bot string) string {
+	return a.defaultProj[bot]
+}
+
+// GrantedProjects returns every project explicitly granted to bot (any role).
+func (a *ACL) GrantedProjects(bot string) map[string]Role {
+	out := map[string]Role{}
+	for p, r := range a.roles[bot] {
+		out[p] = r
+	}
+	return out
+}
+
+// ProjectNames returns every project referenced in any bot's roles.
+func (a *ACL) ProjectNames() []string {
+	seen := map[string]struct{}{}
+	for _, b := range a.bots {
+		for p := range b.Roles {
+			seen[p] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func validProjectName(p string) error {
+	if !botIDRE.MatchString(p) {
+		return fmt.Errorf("must match %s", botIDRE)
+	}
+	return nil
+}
+
+// ValidProjectName checks a project slug (same rules as bot ids).
+func ValidProjectName(p string) error { return validProjectName(p) }
+
 func HashToken(t string) string {
 	s := sha256.Sum256([]byte(t))
 	return hex.EncodeToString(s[:])
@@ -136,12 +189,14 @@ func NewToken() (token, hash string, err error) {
 	if _, err = rand.Read(b); err != nil {
 		return "", "", err
 	}
-	token = "bv_" + hex.EncodeToString(b)
+	token = "bm_" + hex.EncodeToString(b)
 	return token, HashToken(token), nil
 }
 
 // DenyAll is an ACL that authenticates nobody (fail-closed state).
-func DenyAll() *ACL { return &ACL{bots: map[string]Bot{}, roles: map[string]map[string]Role{}} }
+func DenyAll() *ACL {
+	return &ACL{bots: map[string]Bot{}, roles: map[string]map[string]Role{}, defaultProj: map[string]string{}}
+}
 
 // Loader holds the current ACL and reloads it. After MaxFailures consecutive
 // reload failures it fails closed (DenyAll) so a broken or unreadable
