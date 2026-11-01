@@ -33,6 +33,10 @@ import (
 const driveScope = "https://www.googleapis.com/auth/drive.file"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("botmemory %s\n", Version)
+		return
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: botmemory serve | stdio | migrate | projects|list|get|… | bootstrap | mint-token | acl …")
 		os.Exit(2)
@@ -64,6 +68,13 @@ func main() {
 		if err := bootstrap(context.Background(), bootstrapTestFolder(os.Args[2:])); err != nil {
 			log.Fatal(err)
 		}
+	case "version":
+		fmt.Printf("botmemory %s\n", Version)
+	case "ping":
+		if err := runBotPing(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
 	case "migrate":
 		if err := migrateMain(os.Args[2:]); err != nil {
 			if errors.Is(err, errUsage) {
@@ -73,7 +84,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "serve":
-		storage, dataDir := "", ""
+		storage, dataDir, warmEvery := "", "", time.Duration(0)
 		for i := 2; i < len(os.Args); i++ {
 			switch os.Args[i] {
 			case "--storage":
@@ -86,13 +97,31 @@ func main() {
 				if i < len(os.Args) {
 					dataDir = os.Args[i]
 				}
+			case "--warm-interval":
+				i++
+				if i < len(os.Args) {
+					d, err := time.ParseDuration(os.Args[i])
+					if err != nil {
+						log.Fatal(err)
+					}
+					warmEvery = d
+				}
 			}
 		}
-		if err := runServer(false, storage, dataDir); err != nil {
+		if warmEvery == 0 {
+			if s := strings.TrimSpace(env("WARM_INTERVAL")); s != "" {
+				d, err := time.ParseDuration(s)
+				if err != nil {
+					log.Fatalf("BOTMEMORY_WARM_INTERVAL: %v", err)
+				}
+				warmEvery = d
+			}
+		}
+		if err := runServer(false, storage, dataDir, warmEvery); err != nil {
 			log.Fatal(err)
 		}
 	case "stdio":
-		if err := runServer(true, "", ""); err != nil {
+		if err := runServer(true, "", "", 0); err != nil {
 			log.Fatal(err)
 		}
 	default:
@@ -100,7 +129,7 @@ func main() {
 	}
 }
 
-func runServer(stdio bool, storageFlag, dataDirFlag string) error {
+func runServer(stdio bool, storageFlag, dataDirFlag string, warmEvery time.Duration) error {
 	ctx := context.Background()
 	b, rootKey, err := resolveBackend(ctx, storageFlag, dataDirFlag)
 	if err != nil {
@@ -121,6 +150,15 @@ func runServer(stdio bool, storageFlag, dataDirFlag string) error {
 	aclFn := loader.Current
 	v := vault.New(b, aclFn)
 	warmStorage(ctx, b, aclFn)
+	if warmEvery > 0 {
+		go func() {
+			t := time.NewTicker(warmEvery)
+			defer t.Stop()
+			for range t.C {
+				warmStorage(context.Background(), b, aclFn)
+			}
+		}()
+	}
 	srv := &mcp.Server{V: v, ACL: aclFn, Version: Version}
 	if stdio {
 		return runStdio(srv)

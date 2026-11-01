@@ -11,10 +11,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/southline-tech/botmemory/internal/mcp"
 )
+
+var prePingOnce sync.Once
 
 var errBotUsage = errors.New("bot cli usage")
 
@@ -100,6 +103,7 @@ type mcpClient struct {
 }
 
 func (c *mcpClient) callTool(ctx context.Context, tool string, args map[string]any) (any, error) {
+	c.maybePrePing(ctx)
 	id := json.RawMessage(`1`)
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -170,6 +174,56 @@ func (c *mcpClient) callTool(ctx context.Context, tool string, args map[string]a
 	return wrap.Result, nil
 }
 
+func (c *mcpClient) maybePrePing(ctx context.Context) {
+	prePingOnce.Do(func() {
+		if strings.TrimSpace(os.Getenv("BOTMEMORY_PREPING")) == "0" {
+			return
+		}
+		_ = c.ping(ctx)
+	})
+}
+
+func (c *mcpClient) ping(ctx context.Context) error {
+	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("FORBIDDEN: unauthorized")
+	}
+	var wrap struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&wrap)
+	if wrap.Error != nil {
+		return fmt.Errorf("INTERNAL: %s", wrap.Error.Message)
+	}
+	return nil
+}
+
+func runBotPing(args []string) error {
+	f, _, err := parseBotFlags(args)
+	if err != nil {
+		return errBotUsage
+	}
+	tok, err := loadToken(f)
+	if err != nil {
+		return err
+	}
+	c := &mcpClient{url: f.url, token: tok, hc: &http.Client{Timeout: 10 * time.Second}}
+	return c.ping(context.Background())
+}
+
 func withProject(f botFlags, args map[string]any) map[string]any {
 	if args == nil {
 		args = map[string]any{}
@@ -229,20 +283,89 @@ func dispatchBot(ctx context.Context, c *mcpClient, f botFlags, cmd string, args
 		return c.callTool(ctx, "stats", map[string]any{})
 	case "list":
 		a := withProject(f, map[string]any{})
-		if len(args) > 0 {
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 			a["project"] = args[0]
+			args = args[1:]
+		}
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--if-etag" && i+1 < len(args) {
+				a["if_etag"] = args[i+1]
+				i++
+			}
 		}
 		return c.callTool(ctx, "list", a)
+	case "brief":
+		a := withProject(f, map[string]any{})
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			a["project"] = args[0]
+			args = args[1:]
+		}
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--limit":
+				i++
+				v, _ := strconv.Atoi(args[i])
+				a["limit"] = v
+			case "--kind":
+				i++
+				a["kind"] = args[i]
+			case "--tag":
+				i++
+				a["tag"] = args[i]
+			case "--if-etag":
+				i++
+				a["if_etag"] = args[i]
+			}
+		}
+		return c.callTool(ctx, "brief", a)
+	case "changed":
+		a := withProject(f, map[string]any{})
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			a["project"] = args[0]
+			args = args[1:]
+		}
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--since":
+				i++
+				a["since"] = args[i]
+			case "--kind":
+				i++
+				a["kind"] = args[i]
+			case "--tag":
+				i++
+				a["tag"] = args[i]
+			}
+		}
+		return c.callTool(ctx, "changed", a)
 	case "get":
 		if len(args) < 1 {
 			return nil, errBotUsage
 		}
 		a := withProject(f, map[string]any{"key": args[0]})
 		for i := 1; i < len(args); i++ {
-			if args[i] == "--version" && i+1 < len(args) {
-				v, _ := strconv.Atoi(args[i+1])
-				a["version"] = v
+			switch args[i] {
+			case "--version":
 				i++
+				v, _ := strconv.Atoi(args[i])
+				a["version"] = v
+			case "--head":
+				i++
+				v, _ := strconv.Atoi(args[i])
+				a["head"] = v
+			case "--tail":
+				i++
+				v, _ := strconv.Atoi(args[i])
+				a["tail"] = v
+			case "--since":
+				i++
+				a["since"] = args[i]
+			case "--max-bytes":
+				i++
+				v, _ := strconv.Atoi(args[i])
+				a["max_bytes"] = v
+			case "--summary":
+				a["summary"] = true
 			}
 		}
 		return c.callTool(ctx, "get", a)
@@ -375,7 +498,7 @@ Alias: bm=botmemory. Token: --token-file, BOTMEMORY_TOKEN_FILE, or BOTMEMORY_TOK
 
 func isBotCommand(s string) bool {
 	switch s {
-	case "projects", "list", "get", "put", "append", "search", "history", "stats", "delete":
+	case "projects", "list", "get", "put", "append", "search", "history", "stats", "delete", "brief", "changed":
 		return true
 	}
 	return false

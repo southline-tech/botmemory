@@ -78,7 +78,7 @@ func TestInitializeAndList(t *testing.T) {
 	for _, tl := range out["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "list_projects,stats,list,get,put,append,search,history,reindex,delete" {
+	if strings.Join(names, ",") != "list_projects,stats,brief,list,changed,get,put,append,search,history,reindex,delete" {
 		t.Fatal(names)
 	}
 	_, out = rpc(t, s, "pm-tok", "nope", nil)
@@ -285,4 +285,27 @@ func TestToolCallDeadlineSlowDrive(t *testing.T) {
 		t.Fatalf("call took %v, want about CallTimeout (%v)", el, CallTimeout)
 	}
 	t.Logf("hung Drive: tool call failed after %v: %s", el.Round(time.Millisecond), txt)
+}
+
+func TestSinceDateFormsViaMCP(t *testing.T) {
+	s := newSrv(t)
+	put := map[string]any{"project": "vc", "key": "since-mcp", "kind": "note", "title": "T", "body": "hello world"}
+	if e, txt := call(t, s, "pm-tok", "put", put); e {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "pm-tok", "changed", map[string]any{"project": "vc", "since": "2026-11-01"}); e {
+		t.Fatal(txt)
+	} else if !strings.Contains(txt, `"changed"`) {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "pm-tok", "get", map[string]any{
+		"project": "vc", "key": "since-mcp", "since": "2026-11-01T00:00:00Z",
+	}); e || (!strings.Contains(txt, `"mode":"since"`) && !strings.Contains(txt, `"mode": "since"`)) {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "pm-tok", "get", map[string]any{
+		"project": "vc", "key": "since-mcp", "max_bytes": 4,
+	}); e || (!strings.Contains(txt, `"truncated":true`) && !strings.Contains(txt, `"truncated": true`)) {
+		t.Fatal(txt)
+	}
 }

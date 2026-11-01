@@ -29,8 +29,14 @@ type args struct {
 	Links     []string `json:"links"`
 	Text      string   `json:"text"`
 	IfVersion *int     `json:"if_version"`
+	IfEtag    string   `json:"if_etag"`
 	Query     string   `json:"query"`
 	Limit     int      `json:"limit"`
+	Since     string   `json:"since"`
+	Head      int      `json:"head"`
+	Tail      int      `json:"tail"`
+	MaxBytes  int      `json:"max_bytes"`
+	Summary   bool     `json:"summary"`
 }
 
 func (s *Server) resolveProject(bot, project string) (string, error) {
@@ -73,14 +79,47 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			err = e
 			break
 		}
-		out, err = s.V.List(ctx, bot, p, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status})
+		out, err = s.V.ListWithEtag(ctx, bot, p, vault.ListFilter{Kind: a.Kind, Tag: a.Tag, Status: a.Status}, a.IfEtag)
+	case "brief":
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		out, err = s.V.Brief(ctx, bot, p, vault.BriefOpts{Limit: a.Limit, IfEtag: a.IfEtag, Kind: a.Kind, Tag: a.Tag})
+	case "changed":
+		p, e := s.resolveProject(bot, a.Project)
+		if e != nil {
+			err = e
+			break
+		}
+		if strings.TrimSpace(a.Since) == "" {
+			err = fmt.Errorf("%w: since required (RFC3339 or YYYY-MM-DD)", vault.ErrInvalid)
+			break
+		}
+		since, perr := vault.ParseSince(a.Since)
+		if perr != nil {
+			err = perr
+			break
+		}
+		out, err = s.V.Changed(ctx, bot, p, since, vault.ListFilter{Kind: a.Kind, Tag: a.Tag})
 	case "get":
 		p, e := s.resolveProject(bot, a.Project)
 		if e != nil {
 			err = e
 			break
 		}
-		out, err = s.V.Get(ctx, bot, p, a.Key, a.Version)
+		opts := vault.GetOpts{Head: a.Head, Tail: a.Tail, MaxBytes: a.MaxBytes, Summary: a.Summary}
+		if strings.TrimSpace(a.Since) != "" {
+			since, perr := vault.ParseSince(a.Since)
+			if perr != nil {
+				err = perr
+				break
+			}
+			opts.Since = since
+			opts.HasSince = true
+		}
+		out, err = s.V.GetWithOpts(ctx, bot, p, a.Key, a.Version, opts)
 	case "put":
 		p, e := s.resolveProject(bot, a.Project)
 		if e != nil {
@@ -178,10 +217,14 @@ func with(base map[string]any, extra map[string]any) map[string]any {
 var toolDefs = []map[string]any{
 	{"name": "list_projects", "description": "List granted projects (name, role, default flag). Includes granted projects with no records yet.", "inputSchema": obj(map[string]any{})},
 	{"name": "stats", "description": "Process call counters (no note content). Counts by tool, bot, and error code.", "inputSchema": obj(map[string]any{})},
-	{"name": "list", "description": "Call list before get. Returns index summaries (title, summary, tags); not full bodies.",
-		"inputSchema": obj(map[string]any{"project": proj, "kind": kindProp, "tag": str, "status": str})},
-	{"name": "get", "description": "Get a record body; version>0 fetches history.",
-		"inputSchema": obj(with(addr, map[string]any{"version": integer}), "key")},
+	{"name": "brief", "description": "Orient fast: index one-liners (~2k tokens). Call before get. Use if_etag to skip unchanged.",
+		"inputSchema": obj(map[string]any{"project": proj, "limit": integer, "kind": kindProp, "tag": str, "if_etag": str})},
+	{"name": "list", "description": "Call list before get. Returns index summaries; optional if_etag returns unchanged stub only.",
+		"inputSchema": obj(map[string]any{"project": proj, "kind": kindProp, "tag": str, "status": str, "if_etag": str})},
+	{"name": "changed", "description": "Keys whose index updated_at is after since (RFC3339 or YYYY-MM-DD UTC). Use etag with brief/list if_etag.",
+		"inputSchema": obj(map[string]any{"project": proj, "since": str, "kind": kindProp, "tag": str}, "since")},
+	{"name": "get", "description": "Get a record. Use brief/list first. Partial: head, tail, since, max_bytes, or summary (no body). head+tail together is INVALID.",
+		"inputSchema": obj(with(addr, map[string]any{"version": integer, "head": integer, "tail": integer, "since": str, "max_bytes": integer, "summary": map[string]any{"type": "boolean"}}), "key")},
 	{"name": "put", "description": "Create or update. Without if_version only creates; update needs matching if_version. Identical update is a no-op.",
 		"inputSchema": obj(with(addr, map[string]any{"kind": kindProp, "title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "key", "title")},
 	{"name": "append", "description": "Append text; creates missing key as kind=note (v1).",

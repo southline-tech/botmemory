@@ -8,6 +8,8 @@ Three bots share one project (`shipit`) with different roles. Keys follow `^[a-z
 | reviewer | write | `log.review`, `handoff.review` |
 | pm | owner | `plan`, `handoff.pm` |
 
+Keys use dots only — **no `/`** in key names (`feedback.slug.date`, not `feedback/slug`).
+
 **Orientation:** call `list` or `search` before `get` — list returns summaries only (title + body prefix), not full bodies.
 
 ## MCP `tools/call` arguments
@@ -15,6 +17,8 @@ Three bots share one project (`shipit`) with different roles. Keys follow `^[a-z
 | Tool | implementor | reviewer | PM |
 |------|-------------|----------|-----|
 | `list_projects` | `{}` | `{}` | `{}` |
+| `brief` | `{"project":"shipit"}` | same | same |
+| `changed` | `{"project":"shipit","since":"2026-11-01T00:00:00Z"}` | same | same |
 | `list` | `{"project":"shipit"}` | same | same |
 | `get` | `{"project":"shipit","key":"spec.feature"}` | … | … |
 | `put` | `{"project":"shipit","key":"spec.feature","kind":"spec","title":"…","body":"…","if_version":N}` | … | … |
@@ -31,8 +35,9 @@ Omit `project` when the bot token has ACL `default_project` set (`botmemory acl 
 Assume `BOTMEMORY_TOKEN_FILE` and `BOTMEMORY_PROJECT=shipit` (or `--project shipit`).
 
 ```sh
-botmemory list
-botmemory get spec.feature
+botmemory brief
+botmemory changed --since 2026-11-01T00:00:00Z
+botmemory get spec.feature --head 40
 botmemory put spec.feature --title "Feature" --body "…" --kind spec
 botmemory append log.impl --text "- shipped slice 1"
 botmemory search "blocker" --limit 10

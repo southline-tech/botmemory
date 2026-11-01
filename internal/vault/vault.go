@@ -286,23 +286,7 @@ func (v *Vault) List(ctx context.Context, bot, project string, f ListFilter) ([]
 	if err != nil {
 		return nil, err
 	}
-	out := []IndexEntry{}
-	for _, e := range idx.Entries {
-		if f.Status == "" && e.Status == StatusArchived {
-			continue
-		}
-		if f.Status != "" && e.Status != f.Status {
-			continue
-		}
-		if f.Kind != "" && e.Kind != f.Kind {
-			continue
-		}
-		if f.Tag != "" && !contains(e.Tags, f.Tag) {
-			continue
-		}
-		out = append(out, e)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	out := filterIndexEntries(idx, f)
 	return out, nil
 }
 
