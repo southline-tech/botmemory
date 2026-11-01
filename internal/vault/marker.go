@@ -66,6 +66,7 @@ func (v *Vault) checkLocked(ctx context.Context, project string, s *markState) e
 
 // beginWrite must precede a record commit; pair with endWrite.
 func (v *Vault) beginWrite(ctx context.Context, project string) error {
+	v.dropIndexCache(project)
 	s := v.markState(project)
 	s.mu.Lock()
 	defer s.mu.Unlock()

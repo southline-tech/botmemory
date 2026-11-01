@@ -14,8 +14,8 @@ import (
 	"github.com/southline-tech/botmemory/internal/store"
 )
 
-func newVault(t *testing.T) (*Vault, *store.Memory) {
-	t.Helper()
+func newVault(tb testing.TB) (*Vault, *store.Memory) {
+	tb.Helper()
 	h := acl.HashToken
 	a, err := acl.Parse([]byte(fmt.Sprintf(`{"bots":{
 	 "pm":{"token_sha256":%q,"roles":{"vc":"owner"}},
@@ -23,7 +23,7 @@ func newVault(t *testing.T) (*Vault, *store.Memory) {
 	 "ro":{"token_sha256":%q,"roles":{"vc":"read"}},
 	 "grok":{"token_sha256":%q,"roles":{"vc":"write","other":"write","secret":"write"}}}}`, h("pm"), h("impl"), h("ro"), h("grok"))))
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	m := store.NewMemory()
 	v := New(m, func() *acl.ACL { return a })
