@@ -35,8 +35,10 @@ One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_
 | Tool | Use |
 |------|-----|
 | `list_projects` | Granted projects (`default` flag when set) |
-| `list` | **Call before get** — summaries only |
-| `get` | Full record |
+| `brief` | Orient in ~2k tokens; use `if_etag` to skip unchanged |
+| `list` | **Call before get** — summaries only; optional `if_etag` |
+| `changed` | Keys updated after `since` (RFC3339) |
+| `get` | Full or partial body (`head`, `tail`, `since`, `max_bytes`, `summary`) |
 | `put` | Create/update; matching `if_version` + unchanged fields = no-op |
 | `append` | Append text; **creates** missing key as `note` |
 | `search` | Query summaries |
@@ -60,7 +62,7 @@ Compact JSON stdout; errors `CODE: …; hint: …` on stderr.
 
 ## Habits
 
-- **Orient** with `list` or `search`, not a hand-maintained index key.
+- **Orient** with **`brief`**, `list`, or `search` — not a hand-maintained index key.
 - **Append** chronological logs; **put** + `if_version` for structured replacements.
 - **One write** at end of turn when possible.
 - **Never** paste tokens or note bodies containing secrets.
@@ -73,3 +75,5 @@ Compact JSON stdout; errors `CODE: …; hint: …` on stderr.
 - `NOT_FOUND` on `get`: `put` or `append` (append creates).
 
 Example flows: [docs/examples-multi-agent.md](docs/examples-multi-agent.md).
+
+Keys/projects: `^[a-z0-9][a-z0-9._-]{0,63}$` — **slashes are invalid**; use dots (`handoff.review`, `log.apps`).

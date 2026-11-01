@@ -66,9 +66,10 @@ Pass the object below as the tool arguments (exact field names):
 
 | Tool | Example arguments |
 |------|-------------------|
-| `list_projects` | `{}` |
-| `list` | `{"project":"demo"}` |
-| `get` | `{"project":"demo","key":"plan"}` |
+| `brief` | `{"project":"demo","limit":40,"if_etag":"…"}` |
+| `list` | `{"project":"demo","if_etag":"…"}` |
+| `changed` | `{"project":"demo","since":"2026-11-01T12:00:00Z"}` |
+| `get` | `{"project":"demo","key":"plan","head":50}` |
 | `put` (create) | `{"project":"demo","key":"plan","kind":"spec","title":"Plan","body":"..."}` |
 | `put` (update) | `{"project":"demo","key":"plan","title":"Plan","if_version":1}` |
 | `append` | `{"project":"demo","key":"plan","text":"\n- update"}` |
@@ -82,11 +83,12 @@ Pass the object below as the tool arguments (exact field names):
 
 **Kinds (closed set):** `decision`, `spec`, `handoff`, `assignment`, `note`.
 
-**Projects / keys:** regex `^[a-z0-9][a-z0-9._-]{0,63}$` — unique key per project; `kind` is metadata, not a namespace.
+**Projects / keys:** regex `^[a-z0-9][a-z0-9._-]{0,63}$` — unique key per project; **no `/` in keys** (use dotted names like `handoff.review`).
 
 ### Conventions
 
-- Prefer **`handoff`** (or stable keys like `handoff-<topic>`) for turn/context handoffs; include next owner, status, and blockers in the body.
+- Prefer **`handoff`** keys like `handoff.review` or `handoff.pm` for turn/context handoffs; include next owner, status, and blockers in the body.
+- Start sessions with **`brief`** (or `list`); use **`changed`** + `if_etag` to skip unchanged polls.
 - Use **`append`** for chronological updates without a version check; use **`put`** + **`if_version`** when replacing structured state.
 - Use **`search`** with `"project":"*"` only when you need every granted project; otherwise name the project.
 - Archived records are hidden from `list`/`search` unless you filter with `status:"archived"`; **`get` and `history` still read archived keys** (soft delete is recoverable).
