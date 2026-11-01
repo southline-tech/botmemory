@@ -283,7 +283,7 @@ func dispatchBot(ctx context.Context, c *mcpClient, f botFlags, cmd string, args
 		return c.callTool(ctx, "stats", map[string]any{})
 	case "list":
 		a := withProject(f, map[string]any{})
-		if len(args) > 0 {
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 			a["project"] = args[0]
 			args = args[1:]
 		}

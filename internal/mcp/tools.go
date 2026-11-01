@@ -94,12 +94,12 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			break
 		}
 		if strings.TrimSpace(a.Since) == "" {
-			err = fmt.Errorf("%w: since required (RFC3339)", vault.ErrInvalid)
+			err = fmt.Errorf("%w: since required (RFC3339 or YYYY-MM-DD)", vault.ErrInvalid)
 			break
 		}
-		since, perr := time.Parse(time.RFC3339, a.Since)
+		since, perr := vault.ParseSince(a.Since)
 		if perr != nil {
-			err = fmt.Errorf("%w: since must be RFC3339", vault.ErrInvalid)
+			err = perr
 			break
 		}
 		out, err = s.V.Changed(ctx, bot, p, since, vault.ListFilter{Kind: a.Kind, Tag: a.Tag})
@@ -111,9 +111,9 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 		}
 		opts := vault.GetOpts{Head: a.Head, Tail: a.Tail, MaxBytes: a.MaxBytes, Summary: a.Summary}
 		if strings.TrimSpace(a.Since) != "" {
-			since, perr := time.Parse(time.RFC3339, a.Since)
+			since, perr := vault.ParseSince(a.Since)
 			if perr != nil {
-				err = fmt.Errorf("%w: since must be RFC3339", vault.ErrInvalid)
+				err = perr
 				break
 			}
 			opts.Since = since
@@ -221,7 +221,7 @@ var toolDefs = []map[string]any{
 		"inputSchema": obj(map[string]any{"project": proj, "limit": integer, "kind": kindProp, "tag": str, "if_etag": str})},
 	{"name": "list", "description": "Call list before get. Returns index summaries; optional if_etag returns unchanged stub only.",
 		"inputSchema": obj(map[string]any{"project": proj, "kind": kindProp, "tag": str, "status": str, "if_etag": str})},
-	{"name": "changed", "description": "Keys whose index updated_at is after since (RFC3339). Use etag with brief/list if_etag.",
+	{"name": "changed", "description": "Keys whose index updated_at is after since (RFC3339 or YYYY-MM-DD UTC). Use etag with brief/list if_etag.",
 		"inputSchema": obj(map[string]any{"project": proj, "since": str, "kind": kindProp, "tag": str}, "since")},
 	{"name": "get", "description": "Get a record. Use brief/list first. Partial: head, tail, since, max_bytes, or summary (no body). head+tail together is INVALID.",
 		"inputSchema": obj(with(addr, map[string]any{"version": integer, "head": integer, "tail": integer, "since": str, "max_bytes": integer, "summary": map[string]any{"type": "boolean"}}), "key")},

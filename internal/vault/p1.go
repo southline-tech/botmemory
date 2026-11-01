@@ -25,6 +25,8 @@ type BriefOpts struct {
 
 // BriefResult is the brief tool payload (SPEC v0.3 P1.1).
 type BriefResult struct {
+	Project   string    `json:"project,omitempty"`
+	Version   int       `json:"version,omitempty"`
 	Keys      []string  `json:"keys"`
 	Decisions []string  `json:"decisions,omitempty"`
 	Open      []string  `json:"open,omitempty"`
@@ -55,8 +57,13 @@ type GetOpts struct {
 // GetOutput is get with optional partial fields.
 type GetOutput struct {
 	Record
-	SinceApplied *bool `json:"since_applied,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	N            int    `json:"n,omitempty"`
+	Truncated    bool   `json:"truncated,omitempty"`
+	SinceApplied *bool  `json:"since_applied,omitempty"`
 }
+
+const partialEllipsis = "…"
 
 func (v *Vault) indexEntries(ctx context.Context, bot, project string, f ListFilter) ([]IndexEntry, error) {
 	if err := validName("project", project); err != nil {
@@ -97,7 +104,13 @@ func (v *Vault) Brief(ctx context.Context, bot, project string, opts BriefOpts) 
 	}
 	etag := indexEtag(entries)
 	if opts.IfEtag != "" && opts.IfEtag == etag {
-		return &BriefResult{Unchanged: true, Etag: etag}, nil
+		return &BriefResult{Project: project, Unchanged: true, Etag: etag}, nil
+	}
+	maxVer := 0
+	for _, e := range entries {
+		if e.Version > maxVer {
+			maxVer = e.Version
+		}
 	}
 	limit := opts.Limit
 	if limit <= 0 {
@@ -110,6 +123,8 @@ func (v *Vault) Brief(ctx context.Context, bot, project string, opts BriefOpts) 
 	entries = entries[:limit]
 
 	res := &BriefResult{
+		Project:   project,
+		Version:   maxVer,
 		Etag:      etag,
 		UpdatedAt: maxUpdatedAt(entries),
 		Truncated: truncated,
@@ -259,6 +274,8 @@ func (v *Vault) GetWithOpts(ctx context.Context, bot, project, key string, versi
 	}
 	out := GetOutput{Record: *r}
 	body := r.Body
+	mode, n := partialMode(opts)
+	truncated := false
 	applied := false
 	if opts.HasSince {
 		var ok bool
@@ -267,38 +284,78 @@ func (v *Vault) GetWithOpts(ctx context.Context, bot, project, key string, versi
 		out.SinceApplied = &applied
 	}
 	if opts.Head > 0 {
-		body = headLines(body, opts.Head)
+		var cut bool
+		body, cut = headLines(body, opts.Head)
+		truncated = truncated || cut
 	}
 	if opts.Tail > 0 {
-		body = tailLines(body, opts.Tail)
+		var cut bool
+		body, cut = tailLines(body, opts.Tail)
+		truncated = truncated || cut
 	}
-	if opts.MaxBytes > 0 && len(body) > opts.MaxBytes {
-		body = body[:opts.MaxBytes]
+	if opts.MaxBytes > 0 {
+		var cut bool
+		body, cut = truncateUTF8Ellipsis(body, opts.MaxBytes)
+		truncated = truncated || cut
 	}
 	out.Body = body
+	out.Mode = mode
+	out.N = n
+	out.Truncated = truncated
 	return out, nil
 }
 
-func headLines(body string, n int) string {
-	if n <= 0 {
-		return body
+func partialMode(opts GetOpts) (mode string, n int) {
+	if opts.HasSince {
+		mode = "since"
 	}
-	lines := strings.Split(body, "\n")
-	if len(lines) <= n {
-		return body
+	if opts.Head > 0 {
+		mode = "head"
+		n = opts.Head
 	}
-	return strings.Join(lines[:n], "\n")
+	if opts.Tail > 0 {
+		mode = "tail"
+		n = opts.Tail
+	}
+	if opts.MaxBytes > 0 {
+		mode = "max_bytes"
+		n = opts.MaxBytes
+	}
+	return mode, n
 }
 
-func tailLines(body string, n int) string {
+func headLines(body string, n int) (string, bool) {
 	if n <= 0 {
-		return body
+		return body, false
 	}
 	lines := strings.Split(body, "\n")
 	if len(lines) <= n {
-		return body
+		return body, false
 	}
-	return strings.Join(lines[len(lines)-n:], "\n")
+	return strings.Join(lines[:n], "\n"), true
+}
+
+func tailLines(body string, n int) (string, bool) {
+	if n <= 0 {
+		return body, false
+	}
+	lines := strings.Split(body, "\n")
+	if len(lines) <= n {
+		return body, false
+	}
+	return strings.Join(lines[len(lines)-n:], "\n"), true
+}
+
+func truncateUTF8Ellipsis(body string, maxBytes int) (string, bool) {
+	if maxBytes <= 0 || len(body) <= maxBytes {
+		return body, false
+	}
+	ell := partialEllipsis
+	if maxBytes <= len(ell) {
+		return shrinkUTF8(ell, maxBytes), true
+	}
+	budget := maxBytes - len(ell)
+	return shrinkUTF8(body, budget) + ell, true
 }
 
 // bodySince returns text after the last append stamp at or after since (best-effort).

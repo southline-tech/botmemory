@@ -286,3 +286,26 @@ func TestToolCallDeadlineSlowDrive(t *testing.T) {
 	}
 	t.Logf("hung Drive: tool call failed after %v: %s", el.Round(time.Millisecond), txt)
 }
+
+func TestSinceDateFormsViaMCP(t *testing.T) {
+	s := newSrv(t)
+	put := map[string]any{"project": "vc", "key": "since-mcp", "kind": "note", "title": "T", "body": "hello world"}
+	if e, txt := call(t, s, "pm-tok", "put", put); e {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "pm-tok", "changed", map[string]any{"project": "vc", "since": "2026-11-01"}); e {
+		t.Fatal(txt)
+	} else if !strings.Contains(txt, `"changed"`) {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "pm-tok", "get", map[string]any{
+		"project": "vc", "key": "since-mcp", "since": "2026-11-01T00:00:00Z",
+	}); e || (!strings.Contains(txt, `"mode":"since"`) && !strings.Contains(txt, `"mode": "since"`)) {
+		t.Fatal(txt)
+	}
+	if e, txt := call(t, s, "pm-tok", "get", map[string]any{
+		"project": "vc", "key": "since-mcp", "max_bytes": 4,
+	}); e || (!strings.Contains(txt, `"truncated":true`) && !strings.Contains(txt, `"truncated": true`)) {
+		t.Fatal(txt)
+	}
+}

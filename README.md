@@ -51,7 +51,7 @@ One child process **per bot**, each with its own token env (shared tokens break 
 
 ### Bot CLI
 
-First-class commands (alias `bm=botmemory`): `projects`, `list`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`. Token from `--token-file`, `BOTMEMORY_TOKEN_FILE`, or `BOTMEMORY_TOKEN`. Project from `--project`, `BOTMEMORY_PROJECT`, or ACL `default_project`. Server URL: `BOTMEMORY_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
+First-class commands (alias `bm=botmemory`): `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`. Token from `--token-file`, `BOTMEMORY_TOKEN_FILE`, or `BOTMEMORY_TOKEN`. Project from `--project`, `BOTMEMORY_PROJECT`, or ACL `default_project`. Server URL: `BOTMEMORY_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
 
 ```sh
 botmemory list --project demo
