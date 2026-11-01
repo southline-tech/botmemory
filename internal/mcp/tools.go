@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/southline-tech/botmemory/internal/usage"
 	"github.com/southline-tech/botmemory/internal/vault"
 	"net/http"
 	"strings"
 	"time"
 )
+
+var usageToolNames = map[string]struct{}{
+	"usage_log": {}, "usage_import": {}, "usage_import_csv": {},
+	"watch_check": {}, "watch_init": {}, "usage_chart": {}, "usage_hints": {},
+}
 
 var errUnknownTool = errors.New("unknown tool")
 
@@ -52,6 +58,20 @@ func (s *Server) resolveProject(bot, project string) (string, error) {
 
 func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (any, error) {
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(r.Context(), CallTimeout)
+	defer cancel()
+	if _, ok := usageToolNames[name]; ok {
+		out, err := usage.CallTool(ctx, s.V, bot, name, raw, func(p string) (string, error) {
+			return s.resolveProject(bot, p)
+		})
+		code := ""
+		ok := err == nil
+		if !ok {
+			code = errCode(err)
+		}
+		RecordCall(bot, name, "", "", time.Since(start).Milliseconds(), ok, code)
+		return out, err
+	}
 	var a args
 	if len(raw) > 0 {
 		dec := json.NewDecoder(bytesReader(raw))
@@ -62,8 +82,6 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			return nil, err
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), CallTimeout)
-	defer cancel()
 	var (
 		out any
 		err error
@@ -237,4 +255,28 @@ var toolDefs = []map[string]any{
 		"inputSchema": obj(map[string]any{"project": proj})},
 	{"name": "delete", "description": "Soft archive (owners only).",
 		"inputSchema": obj(with(addr, map[string]any{"if_version": integer}), "key")},
+	{"name": "usage_log", "description": "Append one usage line to log.usage.<bot>. Real tokens primary; never fabricate counts.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+			"project": proj, "bot": str, "type": str, "in": integer, "out": integer, "cache": integer,
+			"model": str, "cost": map[string]any{"type": "number"}, "n": integer, "bytes": integer,
+			"tool": str, "pr": str, "key": key, "ref": str,
+		}, "required": []string{"bot", "type"}, "additionalProperties": false}},
+	{"name": "usage_import", "description": "Write hosted fleet share JSON to usage.share.<date>.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+			"project": proj, "date": str, "body": str, "merge": map[string]any{"type": "boolean"},
+		}, "required": []string{"date", "body"}, "additionalProperties": false}},
+	{"name": "usage_import_csv", "description": "Import Grok/dashboard CSV ground truth to usage.csv.<date>.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+			"project": proj, "date": str, "csv": str, "tz": str,
+		}, "required": []string{"date", "csv"}, "additionalProperties": false}},
+	{"name": "watch_check", "description": "Evaluate watch.rules; token rules first.",
+		"inputSchema": obj(map[string]any{"project": proj, "bot": str, "since": str})},
+	{"name": "watch_init", "description": "Create watch.rules with defaults if missing.",
+		"inputSchema": obj(map[string]any{"project": proj})},
+	{"name": "usage_chart", "description": "Offline HTML+SVG chart (24h-90d). explain with at+explain.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+			"project": proj, "range": str, "out": str, "at": str, "explain": map[string]any{"type": "boolean"},
+		}, "additionalProperties": false}},
+	{"name": "usage_hints", "description": "Waste hints (proxy patterns + token_spike).",
+		"inputSchema": obj(map[string]any{"project": proj, "bot": str, "since": str})},
 }

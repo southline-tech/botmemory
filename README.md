@@ -51,7 +51,9 @@ One child process **per bot**, each with its own token env (shared tokens break 
 
 ### Bot CLI
 
-First-class commands (alias `bm=botmemory`): `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`. Token from `--token-file`, `BOTMEMORY_TOKEN_FILE`, or `BOTMEMORY_TOKEN`. Project from `--project`, `BOTMEMORY_PROJECT`, or ACL `default_project`. Server URL: `BOTMEMORY_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
+First-class commands (alias `bm=botmemory`): `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`, `usage`, `watch`, `import-usage`. Token from `--token-file`, `BOTMEMORY_TOKEN_FILE`, or `BOTMEMORY_TOKEN`. Project from `--project`, `BOTMEMORY_PROJECT`, or ACL `default_project`. Server URL: `BOTMEMORY_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
+
+**Usage (v0.4):** Log **real provider token counts** with `usage log --type tokens --in N --out N` whenever the API returns usage. Use proxy etypes only when counts are hidden. **Never fabricate token numbers.** Charts prefer summed tokens; share/CSV are labeled fallbacks. See [examples/usageproxy/README.md](examples/usageproxy/README.md).
 
 ```sh
 botmemory list --project demo
@@ -76,6 +78,12 @@ Pass the object below as the tool arguments (exact field names):
 | `search` | `{"project":"*","query":"handoff rollout"}` |
 | `history` | `{"project":"demo","key":"plan"}` |
 | `stats` | `{}` |
+| `usage_log` | `{"project":"demo","bot":"my-agent","type":"tokens","in":1200,"out":400,"model":"…"}` |
+| `usage_import` | `{"project":"demo","date":"2026-11-01","body":"{…share json…}"}` |
+| `usage_import_csv` | `{"project":"demo","date":"2026-11-01","csv":"…","tz":"America/Chicago"}` |
+| `watch_check` | `{"project":"demo","since":"2026-11-01"}` |
+| `usage_chart` | `{"project":"demo","range":"7d","out":"/tmp/u.html"}` |
+| `usage_hints` | `{"project":"demo","since":"2026-11-01T00:00:00Z"}` |
 | `reindex` | `{"project":"demo"}` (owner) |
 | `delete` | `{"project":"demo","key":"plan"}` (owner; soft archive) |
 
