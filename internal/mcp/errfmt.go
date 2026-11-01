@@ -20,7 +20,7 @@ func errCode(err error) string {
 		return "FORBIDDEN"
 	case errors.Is(err, vault.ErrNotFound):
 		return "NOT_FOUND"
-	case errors.Is(err, vault.ErrInvalid):
+	case errors.Is(err, vault.ErrInvalid), errors.Is(err, usage.ErrInvalid):
 		return "INVALID"
 	default:
 		return "INTERNAL"

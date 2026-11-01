@@ -268,6 +268,9 @@ var toolDefs = []map[string]any{
 	{"name": "usage_import_csv", "description": "Import Grok/dashboard CSV ground truth to usage.csv.<date>.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 			"project": proj, "date": str, "csv": str, "tz": str,
+			"map": map[string]any{"type": "object", "properties": map[string]any{
+				"time": str, "bot": str, "tokens_in": str, "tokens_out": str,
+			}, "additionalProperties": false},
 		}, "required": []string{"date", "csv"}, "additionalProperties": false}},
 	{"name": "watch_check", "description": "Evaluate watch.rules; token rules first.",
 		"inputSchema": obj(map[string]any{"project": proj, "bot": str, "since": str})},

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/southline-tech/botmemory/internal/usage"
 	"github.com/southline-tech/botmemory/internal/vault"
 )
 
@@ -19,7 +20,7 @@ func ExitCode(err error) int {
 		return 4
 	case errors.Is(err, vault.ErrConflict):
 		return 5
-	case errors.Is(err, vault.ErrInvalid):
+	case errors.Is(err, vault.ErrInvalid), errors.Is(err, usage.ErrInvalid):
 		return 6
 	default:
 		return 1

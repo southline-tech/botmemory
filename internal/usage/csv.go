@@ -42,6 +42,21 @@ type CSVMap struct {
 	TOut   string `json:"tokens_out"`
 }
 
+func applyCSVMapOverride(m *CSVMap, o CSVMap) {
+	if o.Time != "" {
+		m.Time = o.Time
+	}
+	if o.Bot != "" {
+		m.Bot = o.Bot
+	}
+	if o.Tokens != "" {
+		m.Tokens = o.Tokens
+	}
+	if o.TOut != "" {
+		m.TOut = o.TOut
+	}
+}
+
 func detectCSVMap(header []string) CSVMap {
 	lower := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 	m := CSVMap{Time: "timestamp", Bot: "bot", Tokens: "tokens_in", TOut: "tokens_out"}
@@ -73,9 +88,7 @@ func (s *Service) ImportCSV(ctx context.Context, authBot, project, date, tz stri
 	}
 	header = append([]string(nil), header...)
 	m := detectCSVMap(header)
-	if override.Time != "" {
-		m = override
-	}
+	applyCSVMapOverride(&m, override)
 	idx := map[string]int{}
 	for i, h := range header {
 		idx[strings.ToLower(strings.TrimSpace(h))] = i

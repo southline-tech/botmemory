@@ -21,8 +21,8 @@ type logToolArgs struct {
 	projectArg
 	Bot   string  `json:"bot"`
 	Type  string  `json:"type"`
-	In    int     `json:"in"`
-	Out   int     `json:"out"`
+	In    *int    `json:"in"`
+	Out   *int    `json:"out"`
 	Cache int     `json:"cache"`
 	Model string  `json:"model"`
 	Cost  float64 `json:"cost"`
@@ -43,10 +43,11 @@ type importToolArgs struct {
 
 type csvToolArgs struct {
 	projectArg
-	Date string `json:"date"`
-	CSV  string `json:"csv"`
-	Body string `json:"body"`
-	TZ   string `json:"tz"`
+	Date string  `json:"date"`
+	CSV  string  `json:"csv"`
+	Body string  `json:"body"`
+	TZ   string  `json:"tz"`
+	Map  *CSVMap `json:"map,omitempty"`
 }
 
 type watchCheckArgs struct {
@@ -67,6 +68,20 @@ type hintsToolArgs struct {
 	projectArg
 	Bot   string `json:"bot"`
 	Since string `json:"since"`
+}
+
+// ValidateUsageLogMap checks CLI-assembled usage_log args before MCP call.
+func ValidateUsageLogMap(a map[string]any) error {
+	typ, _ := a["type"].(string)
+	if strings.TrimSpace(typ) != "tokens" {
+		return nil
+	}
+	_, inOK := a["in"]
+	_, outOK := a["out"]
+	if !inOK || !outOK {
+		return fmt.Errorf("%w: tokens require in and out", ErrInvalid)
+	}
+	return nil
 }
 
 func decodeTool(raw json.RawMessage, dst any) error {
@@ -132,7 +147,11 @@ func CallTool(ctx context.Context, v *vault.Vault, authBot, name string, raw jso
 		if a.CSV == "" && a.Body != "" {
 			r = strings.NewReader(a.Body)
 		}
-		return svc.ImportCSV(ctx, authBot, project, a.Date, a.TZ, r, CSVMap{})
+		override := CSVMap{}
+		if a.Map != nil {
+			override = *a.Map
+		}
+		return svc.ImportCSV(ctx, authBot, project, a.Date, a.TZ, r, override)
 	case "watch_check":
 		var a watchCheckArgs
 		if err := decodeTool(raw, &a); err != nil {

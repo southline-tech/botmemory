@@ -41,8 +41,8 @@ type Event struct {
 type LogInput struct {
 	Bot   string
 	Type  string
-	In    int
-	Out   int
+	In    *int
+	Out   *int
 	Cache int
 	Model string
 	Cost  float64
@@ -60,15 +60,18 @@ func (in LogInput) format(at time.Time) (string, error) {
 		return "", fmt.Errorf("%w: type required", ErrInvalid)
 	}
 	if typ == "tokens" {
-		if in.In < 0 || in.Out < 0 {
+		if in.In == nil || in.Out == nil {
 			return "", fmt.Errorf("%w: tokens require in and out", ErrInvalid)
+		}
+		if *in.In < 0 || *in.Out < 0 {
+			return "", fmt.Errorf("%w: tokens in and out must be non-negative", ErrInvalid)
 		}
 	} else if _, ok := proxyTypes[typ]; !ok {
 		return "", fmt.Errorf("%w: unknown type %q", ErrInvalid, typ)
 	}
 	parts := []string{at.UTC().Format(time.RFC3339), typ}
 	if typ == "tokens" {
-		parts = append(parts, fmt.Sprintf("in=%d out=%d", in.In, in.Out))
+		parts = append(parts, fmt.Sprintf("in=%d out=%d", *in.In, *in.Out))
 		if in.Cache > 0 {
 			parts = append(parts, fmt.Sprintf("cache=%d", in.Cache))
 		}

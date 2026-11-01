@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -14,6 +15,11 @@ import (
 )
 
 var uctx = context.Background()
+
+func intPtr(n int) *int {
+	v := n
+	return &v
+}
 
 func usageVault(t *testing.T) (*Service, string) {
 	t.Helper()
@@ -54,7 +60,7 @@ func TestParseCSVTimeRFC3339(t *testing.T) {
 
 func TestUsageLogTokensAndProxy(t *testing.T) {
 	s, p := usageVault(t)
-	_, err := s.Log(uctx, "pm", p, LogInput{Bot: "alpha", Type: "tokens", In: 10, Out: 5})
+	_, err := s.Log(uctx, "pm", p, LogInput{Bot: "alpha", Type: "tokens", In: intPtr(10), Out: intPtr(5)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +76,57 @@ func TestUsageLogTokensAndProxy(t *testing.T) {
 
 func TestUsageLogTokensRequireInOut(t *testing.T) {
 	s, p := usageVault(t)
-	_, err := s.Log(uctx, "pm", p, LogInput{Bot: "a", Type: "tokens", In: -1, Out: 1})
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatal(err)
+	v := s.V
+
+	t.Run("service omitted", func(t *testing.T) {
+		_, err := s.Log(uctx, "pm", p, LogInput{Bot: "a", Type: "tokens"})
+		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "tokens require in and out") {
+			t.Fatalf("got %v", err)
+		}
+	})
+	t.Run("service explicit zero", func(t *testing.T) {
+		if _, err := s.Log(uctx, "pm", p, LogInput{Bot: "a", Type: "tokens", In: intPtr(0), Out: intPtr(0)}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("service negative", func(t *testing.T) {
+		_, err := s.Log(uctx, "pm", p, LogInput{Bot: "a", Type: "tokens", In: intPtr(-1), Out: intPtr(1)})
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	resolve := func(proj string) (string, error) {
+		if proj == "" {
+			return p, nil
+		}
+		return proj, nil
 	}
+	t.Run("mcp omitted", func(t *testing.T) {
+		raw := json.RawMessage(`{"bot":"a","type":"tokens","project":"vc"}`)
+		_, err := CallTool(uctx, v, "pm", "usage_log", raw, resolve)
+		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "tokens require in and out") {
+			t.Fatalf("got %v", err)
+		}
+	})
+	t.Run("mcp explicit zero", func(t *testing.T) {
+		raw := json.RawMessage(`{"bot":"a","type":"tokens","in":0,"out":0,"project":"vc"}`)
+		if _, err := CallTool(uctx, v, "pm", "usage_log", raw, resolve); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("cli map omitted", func(t *testing.T) {
+		err := ValidateUsageLogMap(map[string]any{"type": "tokens", "bot": "a"})
+		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "tokens require in and out") {
+			t.Fatalf("got %v", err)
+		}
+	})
+	t.Run("cli map explicit zero", func(t *testing.T) {
+		if err := ValidateUsageLogMap(map[string]any{"type": "tokens", "bot": "a", "in": 0, "out": 0}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestUsageLogLineCap(t *testing.T) {
@@ -122,7 +175,7 @@ func TestShareImportMerge(t *testing.T) {
 func TestWatchTokenAndProxy(t *testing.T) {
 	s, p := usageVault(t)
 	for i := 0; i < 5; i++ {
-		if _, err := s.Log(uctx, "pm", p, LogInput{Bot: "hot", Type: "tokens", In: 200000, Out: 200000}); err != nil {
+		if _, err := s.Log(uctx, "pm", p, LogInput{Bot: "hot", Type: "tokens", In: intPtr(200000), Out: intPtr(200000)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -170,7 +223,7 @@ func TestWatchClean(t *testing.T) {
 
 func TestChartTokensHTML(t *testing.T) {
 	s, p := usageVault(t)
-	_, _ = s.Log(uctx, "pm", p, LogInput{Bot: "b", Type: "tokens", In: 100, Out: 50})
+	_, _ = s.Log(uctx, "pm", p, LogInput{Bot: "b", Type: "tokens", In: intPtr(100), Out: intPtr(50)})
 	html, meta, err := s.ChartHTML(uctx, "pm", p, "7d")
 	if err != nil || meta["mode"] != "tokens" || !strings.Contains(html, "<svg") {
 		t.Fatalf("%v %q", meta, html[:80])
@@ -244,7 +297,7 @@ func TestHintsFixtures(t *testing.T) {
 		{Bot: "b", Type: "msg", N: 1},
 		{Bot: "b", Type: "read", Key: "plan"},
 		{Bot: "b", Type: "retry", N: 1},
-		{Bot: "b", Type: "tokens", In: 100, Out: 100},
+		{Bot: "b", Type: "tokens", In: intPtr(100), Out: intPtr(100)},
 	}
 	for i := 0; i < 25; i++ {
 		for _, c := range cases {
@@ -254,7 +307,7 @@ func TestHintsFixtures(t *testing.T) {
 		}
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := s.Log(uctx, "pm", p, LogInput{Bot: "b", Type: "tokens", In: 5000, Out: 5000}); err != nil {
+		if _, err := s.Log(uctx, "pm", p, LogInput{Bot: "b", Type: "tokens", In: intPtr(5000), Out: intPtr(5000)}); err != nil {
 			t.Fatal(err)
 		}
 	}

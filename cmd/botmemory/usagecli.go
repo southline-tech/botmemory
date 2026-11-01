@@ -7,7 +7,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/southline-tech/botmemory/internal/mcp"
+	"github.com/southline-tech/botmemory/internal/usage"
 )
 
 func runUsageCommand(args []string) error {
@@ -51,6 +55,7 @@ func runImportUsageCommand(args []string) error {
 	file := args[0]
 	rest := args[1:]
 	var date, tz string
+	var csvMap usage.CSVMap
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "--date":
@@ -59,6 +64,13 @@ func runImportUsageCommand(args []string) error {
 		case "--tz":
 			i++
 			tz = rest[i]
+		case "--map":
+			i++
+			m, err := parseCSVMapFlag(rest[i])
+			if err != nil {
+				return err
+			}
+			csvMap = m
 		}
 	}
 	if date == "" {
@@ -68,9 +80,40 @@ func runImportUsageCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	return usageToolCall("usage_import_csv", map[string]any{
+	args := map[string]any{
 		"date": date, "csv": string(b), "tz": tz,
-	})
+	}
+	if csvMap.Time != "" || csvMap.Bot != "" || csvMap.Tokens != "" || csvMap.TOut != "" {
+		args["map"] = csvMap
+	}
+	return usageToolCall("usage_import_csv", args)
+}
+
+func parseCSVMapFlag(s string) (usage.CSVMap, error) {
+	var m usage.CSVMap
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(part, "=")
+		if !ok || strings.TrimSpace(v) == "" {
+			return m, fmt.Errorf("%w: bad --map %q (want key=column)", usage.ErrInvalid, part)
+		}
+		switch strings.TrimSpace(k) {
+		case "time":
+			m.Time = strings.TrimSpace(v)
+		case "bot":
+			m.Bot = strings.TrimSpace(v)
+		case "tokens_in":
+			m.Tokens = strings.TrimSpace(v)
+		case "tokens_out":
+			m.TOut = strings.TrimSpace(v)
+		default:
+			return m, fmt.Errorf("%w: unknown map key %q", usage.ErrInvalid, k)
+		}
+	}
+	return m, nil
 }
 
 func runUsageLog(args []string) error {
@@ -85,10 +128,18 @@ func runUsageLog(args []string) error {
 			a["type"] = args[i]
 		case "--in":
 			i++
-			a["in"], _ = strconv.Atoi(args[i])
+			n, err := strconv.Atoi(args[i])
+			if err != nil {
+				return fmt.Errorf("%w: bad --in", usage.ErrInvalid)
+			}
+			a["in"] = n
 		case "--out":
 			i++
-			a["out"], _ = strconv.Atoi(args[i])
+			n, err := strconv.Atoi(args[i])
+			if err != nil {
+				return fmt.Errorf("%w: bad --out", usage.ErrInvalid)
+			}
+			a["out"] = n
 		case "--cache":
 			i++
 			a["cache"], _ = strconv.Atoi(args[i])
@@ -120,6 +171,10 @@ func runUsageLog(args []string) error {
 			i++
 			a["project"] = args[i]
 		}
+	}
+	if err := usage.ValidateUsageLogMap(a); err != nil {
+		fmt.Fprintln(os.Stderr, mcp.ToolErrLine(err))
+		os.Exit(mcp.ExitCode(err))
 	}
 	return usageToolCall("usage_log", a)
 }
