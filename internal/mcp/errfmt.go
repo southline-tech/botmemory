@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/southline-tech/botmemory/internal/usage"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/usage"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func errCode(err error) string {
 	switch {
+	case errors.Is(err, vault.ErrKindInvalid):
+		return "KIND_INVALID"
 	case errors.Is(err, usage.ErrRangeInvalid):
 		return "RANGE_INVALID"
 	case errors.Is(err, usage.ErrCSVZone):
@@ -36,7 +38,9 @@ func errHint(code string) string {
 	case "NOT_FOUND":
 		return "use put or append (append creates missing key)"
 	case "INVALID":
-		return "check args; project may need BOTMEMORY_PROJECT"
+		return "check args; project may need BOTOPTIMIZER_PROJECT"
+	case "KIND_INVALID":
+		return "append --kind is handoff|spec|decision|note|usage (default note)"
 	case "RANGE_INVALID":
 		return "use --range between 24h and 90d"
 	case "CSV_TZ_REQUIRED":

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 // Service runs optimizer usage operations on a vault.
@@ -42,7 +42,7 @@ func (s *Service) Log(ctx context.Context, authBot, project string, in LogInput)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.V.Append(ctx, authBot, project, key, line)
+	rec, err := s.V.Append(ctx, authBot, project, key, line, "note")
 	if err != nil {
 		return nil, err
 	}

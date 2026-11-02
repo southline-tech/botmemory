@@ -1,10 +1,10 @@
-# botMemory — agent rules card
+# BotOptimizer Memory — agent rules card
 
-Paste into bot rules when using botMemory MCP (HTTP or stdio).
+Paste into bot rules when using BotOptimizer MCP (HTTP or stdio).
 
 ## What it is (and is not)
 
-**botMemory** is shared, attributable **handoff notes** for agent fleets. Default storage is **local disk**; optional **Google Drive**. Content is **not encrypted secrets** — treat vault data as readable on the host (and on Drive if used). Never store passwords, API keys, OAuth tokens, or private keys in records. See [SECURITY.md](SECURITY.md).
+**BotOptimizer Memory** is shared, attributable **handoff notes** for agent fleets. Default storage is **local disk**; optional **Google Drive**. Content is **not encrypted secrets** — treat vault data as readable on the host (and on Drive if used). Never store passwords, API keys, OAuth tokens, or private keys in records. See [SECURITY.md](SECURITY.md).
 
 ## Connect (HTTP)
 
@@ -13,17 +13,17 @@ Paste into bot rules when using botMemory MCP (HTTP or stdio).
 
 ## Connect (stdio)
 
-One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_TOKEN_FILE`. Optional `BOTMEMORY_PROJECT` or ACL `default_project` so you can omit `project` on tools.
+One MCP server process **per bot** with its own `BOTOPTIMIZER_TOKEN` or `BOTOPTIMIZER_TOKEN_FILE`. Optional `BOTOPTIMIZER_PROJECT` or ACL `default_project` so you can omit `project` on tools.
 
 ```json
 {
   "mcpServers": {
-    "botmemory": {
-      "command": "/path/to/botmemory",
+    "botoptimizer": {
+      "command": "/path/to/botoptimizer",
       "args": ["stdio"],
       "env": {
-        "BOTMEMORY_TOKEN_FILE": "/secure/bot.token",
-        "BOTMEMORY_BACKEND": "local"
+        "BOTOPTIMIZER_TOKEN_FILE": "/secure/bot.token",
+        "BOTOPTIMIZER_BACKEND": "local"
       }
     }
   }
@@ -40,7 +40,7 @@ One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_
 | `changed` | Keys updated after `since` (RFC3339) |
 | `get` | Full or partial body (`head`, `tail`, `since`, `max_bytes`, `summary`) |
 | `put` | Create/update; matching `if_version` + unchanged fields = no-op |
-| `append` | Append text; **creates** missing key as `note` |
+| `append` | Append text; **creates** missing key; `--kind` handoff|spec|decision|note|usage (default note) |
 | `search` | Query summaries |
 | `history` | Versions for a key |
 | `stats` | Process call counters (no note content) |
@@ -59,11 +59,11 @@ One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_
 ## CLI (same vault)
 
 ```sh
-export BOTMEMORY_TOKEN_FILE=/secure/bot.token
-export BOTMEMORY_PROJECT=demo
-botmemory list
-botmemory put plan --title T --body B --kind spec
-botmemory append log --text "- item"
+export BOTOPTIMIZER_TOKEN_FILE=/secure/bot.token
+export BOTOPTIMIZER_PROJECT=demo
+botoptimizer list
+botoptimizer put plan --title T --body B --kind spec
+botoptimizer append log --text "- item"
 ```
 
 Compact JSON stdout; errors `CODE: …; hint: …` on stderr.

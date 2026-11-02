@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/southline-tech/botmemory/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/acl"
 )
 
 const briefMaxBytes = 8 << 10

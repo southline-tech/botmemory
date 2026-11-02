@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/mcp"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func TestStdioRoundtrip(t *testing.T) {
@@ -19,7 +19,7 @@ func TestStdioRoundtrip(t *testing.T) {
 	}
 	f := func() *acl.ACL { return a }
 	s := &mcp.Server{V: vault.New(store.NewMemory(), f), ACL: f, Version: "test"}
-	t.Setenv("BOTMEMORY_TOKEN", "stdio-tok")
+	t.Setenv("BOTOPTIMIZER_TOKEN", "stdio-tok")
 	ctx := context.Background()
 	res := s.CallTool(ctx, "b", "put", json.RawMessage(`{"project":"p","key":"k","title":"t","body":"b"}`))
 	if res["isError"] == true {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/instance"
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/instance"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 // M3: the CLI never prints a token or a hash, and works on the memory backend.
@@ -33,7 +33,7 @@ func TestACLCommandMemory(t *testing.T) {
 	tok, _ := os.ReadFile(tp)
 	token := strings.TrimSpace(string(tok))
 	s := out.String()
-	if strings.Contains(s, token) || strings.Contains(s, acl.HashToken(token)) || strings.Contains(s, "bm_") {
+	if strings.Contains(s, token) || strings.Contains(s, acl.HashToken(token)) || strings.Contains(s, "bo_") {
 		t.Fatal("CLI output contains a token or hash")
 	}
 	for _, want := range []string{"pm-verifychain", "active", "verifychain=owner", "reviewer-verifychain", "REVOKED", "verifychain=write"} {
@@ -76,7 +76,7 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	lp := filepath.Join(dir, "acl.lock")
-	t.Setenv("BOTMEMORY_ACL_LOCK_FILE", lp)
+	t.Setenv("BOTOPTIMIZER_ACL_LOCK_FILE", lp)
 	m := store.NewMemory()
 	held, err := instance.Acquire(lp)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 	var out bytes.Buffer
 	tp := filepath.Join(dir, "b.token")
 	err = runACLLocked(ctx, m, "root", []string{"grant", "b", "p", "write", "--token-out", tp}, &out)
-	if err == nil || !strings.Contains(err.Error(), "another `botmemory acl` run") {
+	if err == nil || !strings.Contains(err.Error(), "another `botoptimizer acl` run") {
 		t.Fatalf("concurrent run not refused: %v", err)
 	}
 	if _, err := os.Stat(tp); !os.IsNotExist(err) {
@@ -101,7 +101,7 @@ func TestACLLockRefusesConcurrentRun(t *testing.T) {
 }
 
 func TestACLLockPath(t *testing.T) {
-	t.Setenv("BOTMEMORY_ACL_LOCK_FILE", "")
+	t.Setenv("BOTOPTIMIZER_ACL_LOCK_FILE", "")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // must not matter (R4-1)
 	rt := filepath.Dir(mustUserDir(t))
 	p, err := aclLockPath("someroot")
@@ -109,7 +109,7 @@ func TestACLLockPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, _ := aclLockPath("other")
-	if !strings.HasPrefix(p, filepath.Join(rt, "botmemory", "acl-")) || strings.HasPrefix(p, "/var/tmp") || p == q || p == lockPath("someroot") {
+	if !strings.HasPrefix(p, filepath.Join(rt, "botoptimizer", "acl-")) || strings.HasPrefix(p, "/var/tmp") || p == q || p == lockPath("someroot") {
 		t.Fatalf("bad acl lock path %q", p)
 	}
 	if fi, err := os.Stat(filepath.Dir(p)); err != nil || fi.Mode().Perm() != 0o700 {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 type WatchRule struct {

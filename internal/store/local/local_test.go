@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/store/local"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store/local"
 )
 
 func TestLocalBackendReadWrite(t *testing.T) {

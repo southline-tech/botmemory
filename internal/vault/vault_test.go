@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 func newVault(tb testing.TB) (*Vault, *store.Memory) {
@@ -158,7 +158,7 @@ func TestDeleteArchivesOnly(t *testing.T) {
 	if _, err := put(v, "impl", nil, "x"); !errors.Is(err, ErrConflict) {
 		t.Fatal("blind put revived archived record")
 	}
-	if _, err := v.Append(ctx, "impl", "vc", "k1", "x"); !errors.Is(err, ErrConflict) {
+	if _, err := v.Append(ctx, "impl", "vc", "k1", "x", "note"); !errors.Is(err, ErrConflict) {
 		t.Fatal("append to archived")
 	}
 	if r, err := put(v, "pm", iv(2), "restored"); err != nil || r.Status != "active" {
@@ -171,15 +171,15 @@ func TestDeleteArchivesOnly(t *testing.T) {
 
 func TestAppend(t *testing.T) {
 	v, _ := newVault(t)
-	r0, err := v.Append(ctx, "impl", "vc", "k1", "start")
+	r0, err := v.Append(ctx, "impl", "vc", "k1", "start", "note")
 	if err != nil || r0.Version != 1 || r0.Kind != "note" {
 		t.Fatalf("append create: %+v %v", r0, err)
 	}
-	r, err := v.Append(ctx, "impl", "vc", "k1", "more")
+	r, err := v.Append(ctx, "impl", "vc", "k1", "more", "note")
 	if err != nil || r.Version != 2 || r.UpdatedBy != "impl" || !strings.Contains(r.Body, "— impl, ") || !strings.HasSuffix(r.Body, "more\n") || !strings.HasPrefix(r.Body, "start") {
 		t.Fatalf("%+v %v", r, err)
 	}
-	if _, err := v.Append(ctx, "ro", "vc", "k1", "x"); !errors.Is(err, ErrForbidden) {
+	if _, err := v.Append(ctx, "ro", "vc", "k1", "x", "note"); !errors.Is(err, ErrForbidden) {
 		t.Fatal("reader appended")
 	}
 }

@@ -1,4 +1,4 @@
-module github.com/southline-tech/botmemory
+module github.com/southline-tech/botoptimizer
 
 go 1.27.3
 

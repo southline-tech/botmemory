@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Real-Drive smoke test for a running botMemory server.
+"""Real-Drive smoke test for a running BotOptimizer server.
 
 Exercises every MCP tool against a live server and prints one PASS/FAIL line
 per check. Reads everything from the environment; never prints the token.
 
-  BOTMEMORY_SMOKE_TOKEN    bearer token with owner on BOTMEMORY_SMOKE_PROJECT (required)
-  BOTMEMORY_SMOKE_PROJECT  throwaway project; must start with "smoke-" (default: smoke-test)
-  BOTMEMORY_SMOKE_TEST_ROOT=1  allow any project name (only against a test vault root)
-    (use a root from `botmemory bootstrap --test-folder` / BOTMEMORY_TEST_FOLDER=1)
-  BOTMEMORY_URL            default http://127.0.0.1:8787/mcp
-  BOTMEMORY_SMOKE_M1=1     only the M1 tools (no search/history/reindex)
+  BOTOPTIMIZER_SMOKE_TOKEN    bearer token with owner on BOTOPTIMIZER_SMOKE_PROJECT (required)
+  BOTOPTIMIZER_SMOKE_PROJECT  throwaway project; must start with "smoke-" (default: smoke-test)
+  BOTOPTIMIZER_SMOKE_TEST_ROOT=1  allow any project name (only against a test vault root)
+    (use a root from `botoptimizer bootstrap --test-folder` / BOTOPTIMIZER_TEST_FOLDER=1)
+  BOTOPTIMIZER_URL            default http://127.0.0.1:8787/mcp
+  BOTOPTIMIZER_SMOKE_M1=1     only the M1 tools (no search/history/reindex)
 
 Exit status is non-zero if any check fails.
 
@@ -19,15 +19,15 @@ from _acl.json, and discard the token (see README "Real-Drive smoke test").
 """
 import json, os, sys, time, urllib.error, urllib.request
 
-URL = os.environ.get("BOTMEMORY_URL", "http://127.0.0.1:8787/mcp")
-TOKEN = os.environ.get("BOTMEMORY_SMOKE_TOKEN", "")
-PROJECT = os.environ.get("BOTMEMORY_SMOKE_PROJECT", "smoke-test")
-M1 = os.environ.get("BOTMEMORY_SMOKE_M1") == "1"
+URL = os.environ.get("BOTOPTIMIZER_URL", "http://127.0.0.1:8787/mcp")
+TOKEN = os.environ.get("BOTOPTIMIZER_SMOKE_TOKEN", "")
+PROJECT = os.environ.get("BOTOPTIMIZER_SMOKE_PROJECT", "smoke-test")
+M1 = os.environ.get("BOTOPTIMIZER_SMOKE_M1") == "1"
 if not TOKEN:
-    sys.exit("BOTMEMORY_SMOKE_TOKEN is not set")
-if not PROJECT.startswith("smoke-") and os.environ.get("BOTMEMORY_SMOKE_TEST_ROOT") != "1":
+    sys.exit("BOTOPTIMIZER_SMOKE_TOKEN is not set")
+if not PROJECT.startswith("smoke-") and os.environ.get("BOTOPTIMIZER_SMOKE_TEST_ROOT") != "1":
     sys.exit(f"refusing to write to project {PROJECT!r}: use a smoke-* project "
-             "(or set BOTMEMORY_SMOKE_TEST_ROOT=1 against a test vault root)")
+             "(or set BOTOPTIMIZER_SMOKE_TEST_ROOT=1 against a test vault root)")
 
 
 def call(name, args, tok=None):

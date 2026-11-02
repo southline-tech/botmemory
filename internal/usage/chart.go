@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func ParseRange(r string) (time.Duration, error) {
@@ -129,7 +129,7 @@ func (s *Service) ChartHTML(ctx context.Context, authBot, project, rangeStr stri
 	if mode == "share" {
 		disclaimer = `<p class="disclaimer">Share/import estimates only — no real token series in range.</p>`
 	}
-	html := fmt.Sprintf(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>botmemory usage</title></head><body>
+	html := fmt.Sprintf(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>botoptimizer usage</title></head><body>
 <h1>Usage chart</h1><p>Range: %s · Mode: %s</p>%s
 <svg width="%d" height="%d" xmlns="http://www.w3.org/2000/svg">%s</svg>
 </body></html>`, rangeStr, mode, disclaimer, w, h+pad, bars.String())

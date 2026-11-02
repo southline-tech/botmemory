@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 // readCountBackend counts Read/ReadRev calls (Drive list cost proxy).

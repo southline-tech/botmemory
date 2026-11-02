@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/mcp"
-	"github.com/southline-tech/botmemory/internal/usage"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/usage"
 )
 
 func runUsageCommand(args []string) error {

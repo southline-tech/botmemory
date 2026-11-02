@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/southline-tech/botmemory/internal/usage"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/usage"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 	"net/http"
 	"strings"
 	"time"
@@ -152,7 +152,7 @@ func (s *Server) call(r *http.Request, bot, name string, raw json.RawMessage) (a
 			err = e
 			break
 		}
-		out, err = s.V.Append(ctx, bot, p, a.Key, a.Text)
+		out, err = s.V.Append(ctx, bot, p, a.Key, a.Text, strings.TrimSpace(a.Kind))
 	case "search":
 		p := strings.TrimSpace(a.Project)
 		if p == "" {
@@ -245,8 +245,8 @@ var toolDefs = []map[string]any{
 		"inputSchema": obj(with(addr, map[string]any{"version": integer, "head": integer, "tail": integer, "since": str, "max_bytes": integer, "summary": map[string]any{"type": "boolean"}}), "key")},
 	{"name": "put", "description": "Create or update. Without if_version only creates; update needs matching if_version. Identical update is a no-op.",
 		"inputSchema": obj(with(addr, map[string]any{"kind": kindProp, "title": str, "body": str, "status": str, "tags": strs, "links": strs, "if_version": integer}), "key", "title")},
-	{"name": "append", "description": "Append text; creates missing key as kind=note (v1).",
-		"inputSchema": obj(with(addr, map[string]any{"text": str}), "key", "text")},
+	{"name": "append", "description": "Append text; creates missing key (default kind=note).",
+		"inputSchema": obj(with(addr, map[string]any{"text": str, "kind": map[string]any{"type": "string", "enum": []string{"note", "handoff", "spec", "decision", "usage"}}}), "key", "text")},
 	{"name": "search", "description": "Search summaries; project=\"*\" searches all granted projects.",
 		"inputSchema": obj(map[string]any{"project": str, "query": str, "kind": kindProp, "tag": str, "status": str, "limit": integer}, "project", "query")},
 	{"name": "history", "description": "List versions for a key (newest first).",
