@@ -51,6 +51,30 @@ func main() {
 		return
 	}
 	switch cmd {
+	case "usage":
+		if err := runUsageCommand(os.Args[2:]); err != nil {
+			if errors.Is(err, errBotUsage) {
+				os.Exit(2)
+			}
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+	case "watch":
+		if err := runWatchCommand(os.Args[2:]); err != nil {
+			if errors.Is(err, errBotUsage) {
+				os.Exit(2)
+			}
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+	case "import-usage":
+		if err := runImportUsageCommand(os.Args[2:]); err != nil {
+			if errors.Is(err, errBotUsage) {
+				os.Exit(2)
+			}
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
 	case "mint-token":
 		if len(os.Args) != 3 {
 			log.Fatal("usage: botmemory mint-token BOT_ID")

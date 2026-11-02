@@ -78,7 +78,7 @@ func TestInitializeAndList(t *testing.T) {
 	for _, tl := range out["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "list_projects,stats,brief,list,changed,get,put,append,search,history,reindex,delete" {
+	if strings.Join(names, ",") != "list_projects,stats,brief,list,changed,get,put,append,search,history,reindex,delete,usage_log,usage_import,usage_import_csv,watch_check,watch_init,usage_chart,usage_hints" {
 		t.Fatal(names)
 	}
 	_, out = rpc(t, s, "pm-tok", "nope", nil)

@@ -45,6 +45,14 @@ One MCP server process **per bot** with its own `BOTMEMORY_TOKEN` or `BOTMEMORY_
 | `history` | Versions for a key |
 | `stats` | Process call counters (no note content) |
 | `reindex` / `delete` | Owners only (`delete` soft-archives; writers get FORBIDDEN) |
+| `usage_log` | Append one line to `log.usage.<bot>` — **real `tokens` in/out from provider API first** |
+| `usage_import` | Hosted fleet share JSON → `usage.share.<date>` (fallback charts) |
+| `usage_import_csv` | Dashboard CSV ground truth → `usage.csv.<date>` |
+| `watch_check` / `watch_init` | Token budget rules **before** proxy rules |
+| `usage_chart` | Offline HTML+SVG (`--range` 24h–90d); `explain` at timestamp |
+| `usage_hints` | Waste patterns + `token_spike` |
+
+**Usage:** Log **`tokens`** with provider-reported `in`/`out`/`cache`/`model` whenever available. Use proxy etypes (`wake`, `bytes_r`, `tool`, …) only when counts are hidden. **Never fabricate token numbers.**
 
 - **`get` / `history`:** include **archived** records; **`list` / `search`** hide archived unless `status:"archived"`.
 
