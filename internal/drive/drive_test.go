@@ -484,7 +484,7 @@ func TestBootstrapTestFolder(t *testing.T) {
 		t.Fatalf("folder name %q want %q", fd.files[id].name, TestRootFolderName)
 	}
 	if len(fd.folders("root", RootFolderName)) != 0 {
-		t.Fatal("test-folder bootstrap created production botMemory folder")
+		t.Fatal("test-folder bootstrap created production botMemory Drive folder")
 	}
 	id2, seeded2, err := Bootstrap(ctx, hc, srv.URL, true)
 	if err != nil || id2 != id || seeded2 {

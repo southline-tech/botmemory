@@ -51,7 +51,7 @@ One child process **per bot**, each with its own token env (shared tokens break 
 
 ### Bot CLI
 
-First-class commands (alias `bm=botoptimizer`): `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`, `usage`, `watch`, `import-usage`. Token from `--token-file`, `BOTOPTIMIZER_TOKEN_FILE`, or `BOTOPTIMIZER_TOKEN`. Project from `--project`, `BOTOPTIMIZER_PROJECT`, or ACL `default_project`. Server URL: `BOTOPTIMIZER_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
+First-class commands: `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`, `usage`, `watch`, `import-usage`. Token from `--token-file`, `BOTOPTIMIZER_TOKEN_FILE`, or `BOTOPTIMIZER_TOKEN`. Project from `--project`, `BOTOPTIMIZER_PROJECT`, or ACL `default_project`. Server URL: `BOTOPTIMIZER_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
 
 **Usage (v0.4):** Log **real provider token counts** with `usage log --type tokens --in N --out N` whenever the API returns usage. Use proxy etypes only when counts are hidden. **Never fabricate token numbers.** Charts prefer summed tokens; share/CSV are labeled fallbacks. See [examples/usageproxy/README.md](examples/usageproxy/README.md).
 
@@ -89,7 +89,9 @@ Pass the object below as the tool arguments (exact field names):
 
 **`delete` is owner-only** — writers get `FORBIDDEN`; ask the project owner. **`get` still returns archived records** (soft delete); `list` / `search` omit `status=archived` unless you pass `status:"archived"`. Recover via `get` or `history`.
 
-**Kinds (closed set):** `decision`, `spec`, `handoff`, `assignment`, `note`.
+**Kinds (closed set):** `decision`, `spec`, `handoff`, `assignment`, `note`, `usage`.
+
+**Append create kind:** `botoptimizer append KEY --text … [--kind handoff|spec|decision|note|usage]` (default `note`; invalid kind → `KIND_INVALID`).
 
 **Projects / keys:** regex `^[a-z0-9][a-z0-9._-]{0,63}$` — unique key per project; **no `/` in keys** (use dotted names like `handoff.review`).
 
@@ -107,7 +109,7 @@ Pass the object below as the tool arguments (exact field names):
 - **`401` / token rejected:** stop; do not mint or rotate tokens. Owner checks ACL / runs `botoptimizer acl grant … --rotate`. After revoke, deny may take up to **~60s**.
 - **`FORBIDDEN`:** no grant for that project — ask the owner; do not spam other projects.
 - **`CONFLICT` on `put`:** `get` the record, retry **once** with the correct `if_version`; if still conflicting, escalate (another writer).
-- **`NOT_FOUND` on `get`:** use `put` or `append` (`append` **creates** missing keys as `kind=note`, v1).
+- **`NOT_FOUND` on `get`:** use `put` or `append` (`append` **creates** missing keys; default kind `note`, override with `--kind`).
 - Never print bearer tokens, OAuth values, or raw ACL hashes in chat, logs, or issues.
 
 ---

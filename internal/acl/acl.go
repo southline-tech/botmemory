@@ -189,7 +189,7 @@ func NewToken() (token, hash string, err error) {
 	if _, err = rand.Read(b); err != nil {
 		return "", "", err
 	}
-	token = "bm_" + hex.EncodeToString(b)
+	token = "bo_" + hex.EncodeToString(b)
 	return token, HashToken(token), nil
 }
 

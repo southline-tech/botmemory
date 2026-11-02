@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real-Drive smoke test for a running botMemory server.
+"""Real-Drive smoke test for a running BotOptimizer server.
 
 Exercises every MCP tool against a live server and prints one PASS/FAIL line
 per check. Reads everything from the environment; never prints the token.

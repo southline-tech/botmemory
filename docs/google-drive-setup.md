@@ -1,6 +1,6 @@
 # Google Drive setup (optional)
 
-botMemory defaults to **local disk** storage. Use Drive when you want a shared vault in Google Drive (still not a secrets store).
+BotOptimizer defaults to **local disk** storage. Use Drive when you want a shared BotOptimizer Memory vault in Google Drive (still not a secrets store).
 
 ## Overview
 

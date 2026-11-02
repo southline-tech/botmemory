@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement to botMemory
+description: Suggest an improvement to BotOptimizer
 title: "[Feature]: "
 body:
   - type: textarea
@@ -31,4 +31,4 @@ body:
   - type: markdown
     attributes:
       value: |
-        Features whose main purpose is storing secrets in Drive-backed notes are **out of scope**. botMemory is not a secrets store.
+        Features whose main purpose is storing secrets in Drive-backed notes are **out of scope**. BotOptimizer Memory is not a secrets store.

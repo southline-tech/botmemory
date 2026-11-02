@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild the botMemory server on a fresh/wiped box.
+# Rebuild the BotOptimizer server on a fresh/wiped box.
 #
 #   scripts/setup_box.sh            # install Go if needed, build, check env + root id
 #   scripts/setup_box.sh --test     # ...and run every package's tests (-race, one at a time)

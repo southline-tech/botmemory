@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restart the botMemory server on this box. Run it; don't paste it.
+# Restart the BotOptimizer server on this box. Run it; don't paste it.
 #
 #   scripts/restart_serve.sh
 #

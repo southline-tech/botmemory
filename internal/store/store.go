@@ -1,5 +1,5 @@
-// Package store defines the blob storage interface botMemory persists to.
-// Paths are slash-separated and relative to the botMemory root folder.
+// Package store defines the blob storage interface BotOptimizer Memory persists to.
+// Paths are slash-separated and relative to the vault root folder.
 package store
 
 import (
@@ -17,7 +17,7 @@ var (
 	ErrTooLarge = errors.New("store: file too large")
 )
 
-// Backend is the minimal file-like storage botMemory needs. Implementations:
+// Backend is the minimal file-like storage BotOptimizer Memory needs. Implementations:
 // Memory (tests/dev) and drive.Backend (Google Drive, production).
 type Backend interface {
 	// Read returns the file's bytes or ErrNotFound.

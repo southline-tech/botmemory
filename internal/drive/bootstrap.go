@@ -16,7 +16,7 @@ const RootFolderName = "botMemory"
 // It must never be used as the production vault.
 const TestRootFolderName = "botMemory-test"
 
-// Bootstrap finds or creates the botMemory root folder in My Drive and seeds
+// Bootstrap finds or creates the botMemory root folder in My Drive (Drive folder name) and seeds
 // an empty deny-all _acl.json if none exists. Under the drive.file scope the
 // app only sees files it created, so an existing folder found here is ours;
 // re-running is idempotent. Returns the root folder id (set it as

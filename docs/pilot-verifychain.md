@@ -1,6 +1,6 @@
 # verifychain-ai pilot
 
-Three bots share one botMemory project, `verifychain`. No other project is
+Three bots share one BotOptimizer Memory project, `verifychain`. No other project is
 granted, and there are no wildcards.
 
 | Bot | Role | Can do |
@@ -10,13 +10,13 @@ granted, and there are no wildcards.
 | `reviewer-verifychain` | `write` | `get/list/search/history` plus `put/append` (records its review findings) |
 
 **Role decision:** the reviewer gets `write` so it can record findings in
-botMemory (for example appending to a `review-*` record). No append-only role is
+BotOptimizer Memory (for example appending to a `review-*` record). No append-only role is
 added. All writes are attributed via `updated_by` from the token, so reviewer
 edits are always distinguishable; only the PM (`owner`) can archive or reindex.
 
 ## Granting (needs operator approval for real Drive)
 
-On the botMemory host, using the same env as `serve` (OAuth env plus `BOTOPTIMIZER_DRIVE_ROOT_ID`):
+On the BotOptimizer host, using the same env as `serve` (OAuth env plus `BOTOPTIMIZER_DRIVE_ROOT_ID`):
 
 ```sh
 scripts/pilot_verifychain.sh                                   # dry run: shows the 3 grant commands
@@ -58,7 +58,7 @@ time on this host: a second run is refused while the per-vault ACL lock is held.
 
 ## MCP config for each bot
 
-botMemory listens only on loopback: `http://127.0.0.1:8787/mcp` (Streamable HTTP).
+BotOptimizer listens only on loopback: `http://127.0.0.1:8787/mcp` (Streamable HTTP).
 The bot sends `Authorization: Bearer <token>`. Load the token from its file at
 launch so it never sits in a config that gets committed or shared:
 

@@ -1,7 +1,7 @@
-// Command botoptimizer runs the botMemory MCP server.
+// Command botoptimizer runs the BotOptimizer MCP server (BotOptimizer Memory vault).
 //
 //	botoptimizer serve          # serve MCP over HTTP (see .env.example)
-//	botoptimizer bootstrap      # create the botMemory root folder in Drive, print its id
+//	botoptimizer bootstrap      # create the botMemory root folder in Drive (folder name), print its id
 //	botoptimizer mint-token BOT # print a new token + the hash to put in _acl.json
 //	botoptimizer acl grant|revoke|list  # edit _acl.json (see aclcmd.go)
 package main

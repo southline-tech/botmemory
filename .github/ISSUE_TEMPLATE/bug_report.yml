@@ -1,11 +1,11 @@
 name: Bug report
-description: Unexpected behavior in botMemory
+description: Unexpected behavior in BotOptimizer
 title: "[Bug]: "
 body:
   - type: markdown
     attributes:
       value: |
-        botMemory is **not** a secrets store. Notes live in Google Drive and are readable to anyone with vault access. **Do not paste** bearer tokens, OAuth secrets, or refresh tokens in this issue.
+        BotOptimizer Memory is **not** a secrets store. Notes live in Google Drive and are readable to anyone with vault access. **Do not paste** bearer tokens, OAuth secrets, or refresh tokens in this issue.
   - type: textarea
     id: what-happened
     attributes:
@@ -23,7 +23,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: botMemory version / commit
+      label: BotOptimizer version / commit
       description: Release tag or git SHA.
       placeholder: e.g. v0.1.0 or 98aca025
     validations:

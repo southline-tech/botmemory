@@ -294,7 +294,7 @@ func (d *Backend) Write(ctx context.Context, p string, data []byte) error {
 // WriteIf checks the file's current Drive version against rev immediately
 // before uploading. Drive offers no compare-and-swap for files.update, so a
 // small window remains; the server's single-instance lock closes it for
-// botMemory (the only writer, drive.file scope).
+// BotOptimizer (the only writer, drive.file scope).
 func (d *Backend) WriteIf(ctx context.Context, p string, data []byte, rev string) error {
 	return d.write(ctx, p, data, &rev)
 }

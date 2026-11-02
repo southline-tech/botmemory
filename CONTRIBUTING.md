@@ -1,6 +1,6 @@
-# Contributing to botMemory
+# Contributing to BotOptimizer
 
-Thank you for helping improve [botMemory](https://github.com/southline-tech/botoptimizer). This guide covers local setup, tests, and how to open a pull request.
+Thank you for helping improve [BotOptimizer](https://github.com/southline-tech/botmemory). This guide covers local setup, tests, and how to open a pull request.
 
 ## Prerequisites
 
@@ -10,8 +10,8 @@ Thank you for helping improve [botMemory](https://github.com/southline-tech/boto
 ## Dev setup
 
 ```sh
-git clone https://github.com/southline-tech/botoptimizer.git
-cd botoptimizer
+git clone https://github.com/southline-tech/botmemory.git
+cd botmemory
 cp .env.example .env   # fill BOTOPTIMIZER_*; never commit .env
 go build -o botoptimizer ./cmd/botoptimizer
 ```
@@ -69,7 +69,7 @@ That adds a `Signed-off-by:` line to the commit message. If project policy chang
 
 ## License and security expectations
 
-botMemory stores **shared notes in Google Drive** (ordinary files/Docs). Anyone with access to the vault folder can read those notes. It is **not** a secrets store — do not put passwords, API keys, OAuth tokens, or similar material in botMemory records. See [SECURITY.md](SECURITY.md) for the threat model and how to report vulnerabilities.
+BotOptimizer Memory stores **shared notes in Google Drive** (ordinary files/Docs). Anyone with access to the vault folder can read those notes. It is **not** a secrets store — do not put passwords, API keys, OAuth tokens, or similar material in BotOptimizer Memory records. See [SECURITY.md](SECURITY.md) for the threat model and how to report vulnerabilities.
 
 ## See also
 

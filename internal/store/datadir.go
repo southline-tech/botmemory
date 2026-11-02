@@ -6,7 +6,7 @@ import (
 	"runtime"
 )
 
-// DefaultDataDir returns the platform default botMemory data directory.
+// DefaultDataDir returns the platform default BotOptimizer data directory.
 func DefaultDataDir() string {
 	if d := os.Getenv("BOTOPTIMIZER_DATA_DIR"); d != "" {
 		return d

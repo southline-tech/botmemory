@@ -33,7 +33,7 @@ func TestACLCommandMemory(t *testing.T) {
 	tok, _ := os.ReadFile(tp)
 	token := strings.TrimSpace(string(tok))
 	s := out.String()
-	if strings.Contains(s, token) || strings.Contains(s, acl.HashToken(token)) || strings.Contains(s, "bm_") {
+	if strings.Contains(s, token) || strings.Contains(s, acl.HashToken(token)) || strings.Contains(s, "bo_") {
 		t.Fatal("CLI output contains a token or hash")
 	}
 	for _, want := range []string{"pm-verifychain", "active", "verifychain=owner", "reviewer-verifychain", "REVOKED", "verifychain=write"} {

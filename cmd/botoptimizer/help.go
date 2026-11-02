@@ -136,6 +136,9 @@ Example:
 	"version": `usage: botoptimizer version | botoptimizer --version
 
 Print version string.
+
+Example:
+  botoptimizer version
 `,
 	"ping": `usage: botoptimizer ping
 
