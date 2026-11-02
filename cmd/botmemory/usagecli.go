@@ -80,13 +80,13 @@ func runImportUsageCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	args := map[string]any{
+	payload := map[string]any{
 		"date": date, "csv": string(b), "tz": tz,
 	}
 	if csvMap.Time != "" || csvMap.Bot != "" || csvMap.Tokens != "" || csvMap.TOut != "" {
-		args["map"] = csvMap
+		payload["map"] = csvMap
 	}
-	return usageToolCall("usage_import_csv", args)
+	return usageToolCall("usage_import_csv", payload)
 }
 
 func parseCSVMapFlag(s string) (usage.CSVMap, error) {
