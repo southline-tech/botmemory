@@ -1,6 +1,6 @@
-# botMemory
+# BotOptimizer
 
-Shared memory and handoff notes for AI agent fleets — MCP (HTTP or stdio), **local disk by default**, optional Google Drive. **Not a secrets store.** (Formerly an internal codename; product name is botMemory.)
+**BotOptimizer Memory** — shared handoff notes for AI agent fleets (MCP HTTP or stdio), **local disk by default**, optional Google Drive. **Not a secrets store.**
 
 Also see [AGENTS.md](AGENTS.md) (pasteable bot rules) · [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)
 
@@ -8,7 +8,7 @@ Also see [AGENTS.md](AGENTS.md) (pasteable bot rules) · [CONTRIBUTING.md](CONTR
 
 ### What / when
 
-Use botMemory for **shared, attributable project state** across bots: decisions, specs, handoffs, assignments, and general notes. Do **not** store secrets. Local vault files are host-readable; Drive vault notes are folder-readable. Threat model: [SECURITY.md](SECURITY.md).
+Use BotOptimizer Memory for **shared, attributable project state** across bots: decisions, specs, handoffs, assignments, and general notes. Do **not** store secrets. Local vault files are host-readable; Drive vault notes are folder-readable. Threat model: [SECURITY.md](SECURITY.md).
 
 **Habits:** `list` or `search` before `get`; `append` for logs; one structured `put` at end of turn; never paste tokens.
 
@@ -19,9 +19,9 @@ Streamable HTTP, **`POST`** only, path **`/mcp`**. Default: `http://127.0.0.1:87
 ```json
 {
   "mcpServers": {
-    "botmemory": {
+    "botoptimizer": {
       "url": "http://127.0.0.1:8787/mcp",
-      "headers": { "Authorization": "Bearer ${BOTMEMORY_TOKEN}" }
+      "headers": { "Authorization": "Bearer ${BOTOPTIMIZER_TOKEN}" }
     }
   }
 }
@@ -36,13 +36,13 @@ One child process **per bot**, each with its own token env (shared tokens break 
 ```json
 {
   "mcpServers": {
-    "botmemory": {
-      "command": "/path/to/botmemory",
+    "botoptimizer": {
+      "command": "/path/to/botoptimizer",
       "args": ["stdio"],
       "env": {
-        "BOTMEMORY_TOKEN_FILE": "/secure/bot.token",
-        "BOTMEMORY_PROJECT": "demo",
-        "BOTMEMORY_BACKEND": "local"
+        "BOTOPTIMIZER_TOKEN_FILE": "/secure/bot.token",
+        "BOTOPTIMIZER_PROJECT": "demo",
+        "BOTOPTIMIZER_BACKEND": "local"
       }
     }
   }
@@ -51,15 +51,15 @@ One child process **per bot**, each with its own token env (shared tokens break 
 
 ### Bot CLI
 
-First-class commands (alias `bm=botmemory`): `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`, `usage`, `watch`, `import-usage`. Token from `--token-file`, `BOTMEMORY_TOKEN_FILE`, or `BOTMEMORY_TOKEN`. Project from `--project`, `BOTMEMORY_PROJECT`, or ACL `default_project`. Server URL: `BOTMEMORY_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
+First-class commands (alias `bm=botoptimizer`): `projects`, `list`, `brief`, `changed`, `get`, `put`, `append`, `search`, `history`, `stats`, `delete`, `version`, `ping`, `usage`, `watch`, `import-usage`. Token from `--token-file`, `BOTOPTIMIZER_TOKEN_FILE`, or `BOTOPTIMIZER_TOKEN`. Project from `--project`, `BOTOPTIMIZER_PROJECT`, or ACL `default_project`. Server URL: `BOTOPTIMIZER_URL` (default `http://127.0.0.1:8787/mcp`). `put --file` / `append --file` read body/text from disk (never logged).
 
 **Usage (v0.4):** Log **real provider token counts** with `usage log --type tokens --in N --out N` whenever the API returns usage. Use proxy etypes only when counts are hidden. **Never fabricate token numbers.** Charts prefer summed tokens; share/CSV are labeled fallbacks. See [examples/usageproxy/README.md](examples/usageproxy/README.md).
 
 ```sh
-botmemory list --project demo
-botmemory put plan --title "Plan" --body "…" --kind spec
-botmemory append log --text "- update"
-botmemory stats
+botoptimizer list --project demo
+botoptimizer put plan --title "Plan" --body "…" --kind spec
+botoptimizer append log --text "- update"
+botoptimizer stats
 ```
 
 ### Tools — example `tools/call` arguments
@@ -104,7 +104,7 @@ Pass the object below as the tool arguments (exact field names):
 ### Failure modes
 
 - **Server down / connection refused / timeout:** do not retry in a tight loop — report to the human operator once and wait for restart.
-- **`401` / token rejected:** stop; do not mint or rotate tokens. Owner checks ACL / runs `botmemory acl grant … --rotate`. After revoke, deny may take up to **~60s**.
+- **`401` / token rejected:** stop; do not mint or rotate tokens. Owner checks ACL / runs `botoptimizer acl grant … --rotate`. After revoke, deny may take up to **~60s**.
 - **`FORBIDDEN`:** no grant for that project — ask the owner; do not spam other projects.
 - **`CONFLICT` on `put`:** `get` the record, retry **once** with the correct `if_version`; if still conflicting, escalate (another writer).
 - **`NOT_FOUND` on `get`:** use `put` or `append` (`append` **creates** missing keys as `kind=note`, v1).
@@ -116,23 +116,23 @@ Pass the object below as the tool arguments (exact field names):
 
 ```sh
 cp .env.example .env
-go build -o botmemory ./cmd/botmemory
-botmemory serve                    # local vault under ~/.local/share/botmemory
-# grant bots, then connect MCP or: botmemory stdio
+go build -o botoptimizer ./cmd/botoptimizer
+botoptimizer serve                    # local vault under ~/.local/share/botoptimizer
+# grant bots, then connect MCP or: botoptimizer stdio
 ```
 
 v0.2 CLI/stdio/local features require **build from source** until the next release tag.
 
 **Optional Drive:** [docs/google-drive-setup.md](docs/google-drive-setup.md). Multi-agent walkthrough: [docs/examples-multi-agent.md](docs/examples-multi-agent.md).
 
-For a **throwaway** Drive smoke vault: `botmemory bootstrap --test-folder` (see script header).
+For a **throwaway** Drive smoke vault: `botoptimizer bootstrap --test-folder` (see script header).
 
-For dev-only ephemeral storage: `BOTMEMORY_BACKEND=memory` (data lost on exit).
+For dev-only ephemeral storage: `BOTOPTIMIZER_BACKEND=memory` (data lost on exit).
 
-**ACL:** only SHA-256 token hashes in `_acl.json`. Mint with `botmemory mint-token BOT_ID`, grant with:
+**ACL:** only SHA-256 token hashes in `_acl.json`. Mint with `botoptimizer mint-token BOT_ID`, grant with:
 
 ```sh
-botmemory acl grant <bot> <project> <role> --token-out FILE [--default-project NAME]
+botoptimizer acl grant <bot> <project> <role> --token-out FILE [--default-project NAME]
 ```
 
 Write tokens only to **`FILE`** (created mode `0600`; must not exist). The CLI does not print raw tokens.
@@ -148,24 +148,24 @@ go test -race ./...
 
 **Smoke (real Drive):** grant a throwaway `smoke-*` project, then `scripts/smoke_drive.py` (reads env only; never prints the token). See script header and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Box setup:** `scripts/setup_box.sh [--test]` builds `~/.local/bin/botmemory` and checks env by name. Override **`BOTMEMORY_BIN`** only with an **absolute path**. Restart: `scripts/restart_serve.sh`.
+**Box setup:** `scripts/setup_box.sh [--test]` builds `~/.local/bin/botoptimizer` and checks env by name. Override **`BOTOPTIMIZER_BIN`** only with an **absolute path**. Restart: `scripts/restart_serve.sh`.
 
 Optional pilot notes: [docs/pilot-verifychain.md](docs/pilot-verifychain.md).
 
-### Environment (`BOTMEMORY_*`)
+### Environment (`BOTOPTIMIZER_*`)
 
 | Variable | Purpose |
 |----------|---------|
-| `BOTMEMORY_ADDR` | Listen address (default `127.0.0.1:8787`; loopback only) |
-| `BOTMEMORY_BACKEND` | `local` (default), `drive`, or `memory` |
-| `BOTMEMORY_DATA_DIR` | Local vault root (default XDG / `%LOCALAPPDATA%\\botmemory`) |
-| `BOTMEMORY_TOKEN_FILE` / `BOTMEMORY_PROJECT` | Bot CLI / stdio defaults |
-| `BOTMEMORY_URL` | MCP URL for CLI (default loopback `/mcp`) |
-| `BOTMEMORY_DRIVE_ROOT_ID` | Drive vault root (optional) |
-| `BOTMEMORY_OAUTH_CLIENT_ID` / `SECRET` / `REFRESH_TOKEN` | Drive backend (server-side secrets) |
-| `BOTMEMORY_ACL_FILE` | Optional local ACL instead of Drive |
-| `BOTMEMORY_LOCK_FILE` | Optional single-instance lock path |
-| `BOTMEMORY_TEST_FOLDER` | Truthy (`1`/`true`/`yes`) for `bootstrap --test-folder` |
+| `BOTOPTIMIZER_ADDR` | Listen address (default `127.0.0.1:8787`; loopback only) |
+| `BOTOPTIMIZER_BACKEND` | `local` (default), `drive`, or `memory` |
+| `BOTOPTIMIZER_DATA_DIR` | Local vault root (default XDG / `%LOCALAPPDATA%\\botoptimizer`) |
+| `BOTOPTIMIZER_TOKEN_FILE` / `BOTOPTIMIZER_PROJECT` | Bot CLI / stdio defaults |
+| `BOTOPTIMIZER_URL` | MCP URL for CLI (default loopback `/mcp`) |
+| `BOTOPTIMIZER_DRIVE_ROOT_ID` | Drive vault root (optional) |
+| `BOTOPTIMIZER_OAUTH_CLIENT_ID` / `SECRET` / `REFRESH_TOKEN` | Drive backend (server-side secrets) |
+| `BOTOPTIMIZER_ACL_FILE` | Optional local ACL instead of Drive |
+| `BOTOPTIMIZER_LOCK_FILE` | Optional single-instance lock path |
+| `BOTOPTIMIZER_TEST_FOLDER` | Truthy (`1`/`true`/`yes`) for `bootstrap --test-folder` |
 
 ### Safety (summary)
 

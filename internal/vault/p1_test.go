@@ -107,7 +107,7 @@ func TestGetSinceDateForm(t *testing.T) {
 	}
 	stamp := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	v.SetClock(func() time.Time { return stamp })
-	if _, err := v.Append(ctx, "pm", "vc", "log", "new bit"); err != nil {
+	if _, err := v.Append(ctx, "pm", "vc", "log", "new bit", "note"); err != nil {
 		t.Fatal(err)
 	}
 	since, err := ParseSince("2026-11-01")
@@ -155,7 +155,7 @@ func TestGetSinceAppend(t *testing.T) {
 	}
 	stamp := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	v.SetClock(func() time.Time { return stamp })
-	if _, err := v.Append(ctx, "pm", "vc", "log", "new bit"); err != nil {
+	if _, err := v.Append(ctx, "pm", "vc", "log", "new bit", "note"); err != nil {
 		t.Fatal(err)
 	}
 	out, err := v.GetWithOpts(ctx, "ro", "vc", "log", 0, GetOpts{Since: stamp.Add(-time.Second), HasSince: true})

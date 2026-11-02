@@ -8,10 +8,10 @@ import (
 )
 
 func TestResolveBackendLocalDefault(t *testing.T) {
-	t.Setenv("BOTMEMORY_BACKEND", "")
-	t.Setenv("BOTMEMORY_DRIVE_ROOT_ID", "")
+	t.Setenv("BOTOPTIMIZER_BACKEND", "")
+	t.Setenv("BOTOPTIMIZER_DRIVE_ROOT_ID", "")
 	dir := t.TempDir()
-	t.Setenv("BOTMEMORY_DATA_DIR", dir)
+	t.Setenv("BOTOPTIMIZER_DATA_DIR", dir)
 	b, root, err := resolveBackend(context.Background(), "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -25,9 +25,9 @@ func TestResolveBackendLocalDefault(t *testing.T) {
 }
 
 func TestResolveBackendDriveCompatWarning(t *testing.T) {
-	t.Setenv("BOTMEMORY_BACKEND", "")
-	t.Setenv("BOTMEMORY_DRIVE_ROOT_ID", "fake-root")
-	t.Setenv("BOTMEMORY_DATA_DIR", t.TempDir())
+	t.Setenv("BOTOPTIMIZER_BACKEND", "")
+	t.Setenv("BOTOPTIMIZER_DRIVE_ROOT_ID", "fake-root")
+	t.Setenv("BOTOPTIMIZER_DATA_DIR", t.TempDir())
 	_, _, err := resolveBackend(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected drive client error without oauth")
@@ -35,7 +35,7 @@ func TestResolveBackendDriveCompatWarning(t *testing.T) {
 }
 
 func TestResolveBackendStorageFlag(t *testing.T) {
-	t.Setenv("BOTMEMORY_BACKEND", "")
+	t.Setenv("BOTOPTIMIZER_BACKEND", "")
 	dir := t.TempDir()
 	b, _, err := resolveBackend(context.Background(), "local", dir)
 	if err != nil {

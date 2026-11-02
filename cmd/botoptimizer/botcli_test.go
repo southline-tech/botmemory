@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/mcp"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func TestBotCLIProjects(t *testing.T) {
@@ -22,8 +22,8 @@ func TestBotCLIProjects(t *testing.T) {
 	f := func() *acl.ACL { return a }
 	srv := httptest.NewServer(&mcp.Server{V: vault.New(store.NewMemory(), f), ACL: f})
 	t.Cleanup(srv.Close)
-	t.Setenv("BOTMEMORY_TOKEN", "tok")
-	t.Setenv("BOTMEMORY_URL", srv.URL)
+	t.Setenv("BOTOPTIMIZER_TOKEN", "tok")
+	t.Setenv("BOTOPTIMIZER_URL", srv.URL)
 	c := &mcpClient{url: srv.URL, token: "tok", hc: srv.Client()}
 	out, err := c.callTool(context.Background(), "list_projects", map[string]any{})
 	if err != nil {

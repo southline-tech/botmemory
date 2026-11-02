@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/drive"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/store/local"
+	"github.com/southline-tech/botoptimizer/internal/drive"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store/local"
 )
 
 // resolveBackend picks the storage backend from flags/env (local default).
@@ -24,7 +24,7 @@ func resolveBackend(ctx context.Context, storageFlag, dataDirFlag string) (store
 	}
 	if name == "local" || name == "" {
 		if name == "" && env("DRIVE_ROOT_ID") != "" {
-			log.Print("botmemory: BOTMEMORY_DRIVE_ROOT_ID is set but BOTMEMORY_BACKEND is empty; using drive backend (set BOTMEMORY_BACKEND=local for local-only)")
+			log.Print("botoptimizer: BOTOPTIMIZER_DRIVE_ROOT_ID is set but BOTOPTIMIZER_BACKEND is empty; using drive backend (set BOTOPTIMIZER_BACKEND=local for local-only)")
 			name = "drive"
 		}
 	}
@@ -48,7 +48,7 @@ func resolveBackend(ctx context.Context, storageFlag, dataDirFlag string) (store
 	case "drive":
 		rootID := env("DRIVE_ROOT_ID")
 		if rootID == "" {
-			return nil, "", errors.New("BOTMEMORY_DRIVE_ROOT_ID is required for the drive backend")
+			return nil, "", errors.New("BOTOPTIMIZER_DRIVE_ROOT_ID is required for the drive backend")
 		}
 		hc, err := driveClient(ctx)
 		if err != nil {
@@ -56,7 +56,7 @@ func resolveBackend(ctx context.Context, storageFlag, dataDirFlag string) (store
 		}
 		return drive.New(hc, rootID), rootID, nil
 	default:
-		return nil, "", fmt.Errorf("BOTMEMORY_BACKEND %q must be local, drive, or memory", name)
+		return nil, "", fmt.Errorf("BOTOPTIMIZER_BACKEND %q must be local, drive, or memory", name)
 	}
 }
 

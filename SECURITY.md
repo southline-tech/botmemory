@@ -15,9 +15,9 @@ Security fixes land on the **latest 0.1.x** release first, then are backported t
 
 **Do not open a public GitHub issue for security bugs.**
 
-Report vulnerabilities **privately** using [GitHub Security Advisories](https://github.com/southline-tech/botmemory/security/advisories/new):
+Report vulnerabilities **privately** using [GitHub Security Advisories](https://github.com/southline-tech/botoptimizer/security/advisories/new):
 
-https://github.com/southline-tech/botmemory/security/advisories/new
+https://github.com/southline-tech/botoptimizer/security/advisories/new
 
 Include:
 
@@ -40,7 +40,7 @@ Include:
 
 - Bot access is gated by **bearer tokens** sent as `Authorization: Bearer <token>` to the MCP endpoint (default `http://127.0.0.1:8787/mcp`).
 - Only **SHA-256 hashes** of tokens are stored in Drive `_acl.json`; raw tokens never belong in the vault.
-- The server binds to **loopback only** (`BOTMEMORY_ADDR` must be a loopback address). Non-loopback binds are refused.
+- The server binds to **loopback only** (`BOTOPTIMIZER_ADDR` must be a loopback address). Non-loopback binds are refused.
 - **Deny by default:** tokens see only projects explicitly granted in `_acl.json`; there is no wildcard project access.
 
 ### What botMemory does not protect
@@ -52,10 +52,10 @@ Include:
 
 ### Operational guidance
 
-- Treat raw bot tokens like passwords. Rotate with `botmemory acl grant … --rotate`; revoke via ACL (`revoke` / `remove`).
-- Keep server-side **`BOTMEMORY_OAUTH_*`** credentials on the host only; never commit them; never put them in Drive notes.
+- Treat raw bot tokens like passwords. Rotate with `botoptimizer acl grant … --rotate`; revoke via ACL (`revoke` / `remove`).
+- Keep server-side **`BOTOPTIMIZER_OAUTH_*`** credentials on the host only; never commit them; never put them in Drive notes.
 - **Unix:** lock files and ACL token files use `O_NOFOLLOW` on the last path component. **Windows:** those opens do not use `O_NOFOLLOW` — create lock and token paths in directories you control (no untrusted symlinks on the path).
 
 ## Preferred language
 
-Product name: **botMemory**. Environment variables: **`BOTMEMORY_*`**.
+Product name: **botMemory**. Environment variables: **`BOTOPTIMIZER_*`**.

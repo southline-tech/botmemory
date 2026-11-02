@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
 )
 
 var prePingOnce sync.Once
@@ -30,7 +30,7 @@ type botFlags struct {
 
 func parseBotFlags(args []string) (botFlags, []string, error) {
 	var f botFlags
-	f.url = strings.TrimSpace(os.Getenv("BOTMEMORY_URL"))
+	f.url = strings.TrimSpace(os.Getenv("BOTOPTIMIZER_URL"))
 	if f.url == "" {
 		f.url = "http://127.0.0.1:8787/mcp"
 	}
@@ -69,7 +69,7 @@ func parseBotFlags(args []string) (botFlags, []string, error) {
 			rest = append(rest, a)
 		}
 	}
-	if os.Getenv("BOTMEMORY_HUMAN") == "1" {
+	if os.Getenv("BOTOPTIMIZER_HUMAN") == "1" {
 		f.human = true
 	}
 	return f, rest, nil
@@ -93,7 +93,7 @@ func loadToken(f botFlags) (string, error) {
 	if t := strings.TrimSpace(env("TOKEN")); t != "" {
 		return t, nil
 	}
-	return "", fmt.Errorf("INVALID: token required; set BOTMEMORY_TOKEN_FILE or --token-file")
+	return "", fmt.Errorf("INVALID: token required; set BOTOPTIMIZER_TOKEN_FILE or --token-file")
 }
 
 type mcpClient struct {
@@ -176,7 +176,7 @@ func (c *mcpClient) callTool(ctx context.Context, tool string, args map[string]a
 
 func (c *mcpClient) maybePrePing(ctx context.Context) {
 	prePingOnce.Do(func() {
-		if strings.TrimSpace(os.Getenv("BOTMEMORY_PREPING")) == "0" {
+		if strings.TrimSpace(os.Getenv("BOTOPTIMIZER_PREPING")) == "0" {
 			return
 		}
 		_ = c.ping(ctx)
@@ -242,7 +242,7 @@ func runBotCommand(cmd string, args []string) error {
 	}
 	tok, err := loadToken(f)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error()+"; hint: set BOTMEMORY_TOKEN_FILE")
+		fmt.Fprintln(os.Stderr, err.Error()+"; hint: set BOTOPTIMIZER_TOKEN_FILE")
 		os.Exit(6)
 	}
 	c := &mcpClient{url: f.url, token: tok, hc: &http.Client{Timeout: 55 * time.Second}}
@@ -435,7 +435,7 @@ func botAppend(ctx context.Context, c *mcpClient, f botFlags, args []string) (an
 	if len(args) < 1 {
 		return nil, errBotUsage
 	}
-	a := withProject(f, map[string]any{"key": args[0]})
+	a := withProject(f, map[string]any{"key": args[0], "kind": "note"})
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--text":
@@ -448,6 +448,12 @@ func botAppend(ctx context.Context, c *mcpClient, f botFlags, args []string) (an
 				return nil, err
 			}
 			a["text"] = string(b)
+		case "--kind":
+			i++
+			if i >= len(args) {
+				return nil, errBotUsage
+			}
+			a["kind"] = args[i]
 		}
 	}
 	if _, ok := a["text"]; !ok {
@@ -492,8 +498,8 @@ func botDelete(ctx context.Context, c *mcpClient, f botFlags, args []string) (an
 }
 
 func printBotUsage() {
-	fmt.Fprintln(os.Stderr, `usage: botmemory [--token-file PATH] [--project NAME] [--human] projects|list|get|put|append|search|history|stats|delete …
-Alias: bm=botmemory. Token: --token-file, BOTMEMORY_TOKEN_FILE, or BOTMEMORY_TOKEN.`)
+	fmt.Fprintln(os.Stderr, `usage: botoptimizer [--token-file PATH] [--project NAME] [--human] projects|list|get|put|append|search|history|stats|delete …
+Alias: bm=botoptimizer. Token: --token-file, BOTOPTIMIZER_TOKEN_FILE, or BOTOPTIMIZER_TOKEN.`)
 }
 
 func isBotCommand(s string) bool {

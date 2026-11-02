@@ -4,8 +4,8 @@ import (
 	"context"
 	"path"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 func warmStorage(ctx context.Context, b store.Backend, aclFn func() *acl.ACL) {

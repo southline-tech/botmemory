@@ -29,32 +29,32 @@ func TestNormalizeLocalhost(t *testing.T) {
 }
 
 func TestLockPathFixedPerRoot(t *testing.T) {
-	t.Setenv("BOTMEMORY_LOCK_FILE", "")
+	t.Setenv("BOTOPTIMIZER_LOCK_FILE", "")
 	a := lockPath("root-A")
 	t.Setenv("TMPDIR", "/elsewhere")
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/999")
 	if lockPath("root-A") != a {
 		t.Fatal("lock path varies with environment")
 	}
-	if !strings.HasPrefix(a, "/var/tmp/botmemory-") || !strings.HasSuffix(a, ".lock") || len(a) != len("/var/tmp/botmemory-")+12+5 {
+	if !strings.HasPrefix(a, "/var/tmp/botoptimizer-") || !strings.HasSuffix(a, ".lock") || len(a) != len("/var/tmp/botoptimizer-")+12+5 {
 		t.Fatalf("unexpected path %s", a)
 	}
 	if lockPath("root-B") == a {
 		t.Fatal("different roots share a lock")
 	}
-	t.Setenv("BOTMEMORY_LOCK_FILE", "/custom.lock")
+	t.Setenv("BOTOPTIMIZER_LOCK_FILE", "/custom.lock")
 	if lockPath("root-A") != "/custom.lock" {
 		t.Fatal("override ignored")
 	}
 }
 
 func TestBootstrapTestFolderEnv(t *testing.T) {
-	t.Setenv("BOTMEMORY_TEST_FOLDER", "")
+	t.Setenv("BOTOPTIMIZER_TEST_FOLDER", "")
 	if bootstrapTestFolder(nil) {
 		t.Fatal("empty env should be false")
 	}
 	for _, v := range []string{"1", "true", "YES", " True "} {
-		t.Setenv("BOTMEMORY_TEST_FOLDER", v)
+		t.Setenv("BOTOPTIMIZER_TEST_FOLDER", v)
 		if !bootstrapTestFolder(nil) {
 			t.Fatalf("truthy %q", v)
 		}
@@ -62,7 +62,7 @@ func TestBootstrapTestFolderEnv(t *testing.T) {
 	if !bootstrapTestFolder([]string{"--test-folder"}) {
 		t.Fatal("--test-folder flag should enable test-folder mode")
 	}
-	t.Setenv("BOTMEMORY_TEST_FOLDER", "0")
+	t.Setenv("BOTOPTIMIZER_TEST_FOLDER", "0")
 	if !bootstrapTestFolder([]string{"--test-folder"}) {
 		t.Fatal("--test-folder should win over env")
 	}

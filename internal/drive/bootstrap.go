@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 // RootFolderName is the app folder created in My Drive by Bootstrap.
@@ -20,7 +20,7 @@ const TestRootFolderName = "botMemory-test"
 // an empty deny-all _acl.json if none exists. Under the drive.file scope the
 // app only sees files it created, so an existing folder found here is ours;
 // re-running is idempotent. Returns the root folder id (set it as
-// BOTMEMORY_DRIVE_ROOT_ID).
+// BOTOPTIMIZER_DRIVE_ROOT_ID).
 //
 // When testFolder is true, only the throwaway TestRootFolderName folder is
 // used or created; production RootFolderName is never touched.
@@ -30,7 +30,7 @@ func Bootstrap(ctx context.Context, hc *http.Client, base string, testFolder boo
 		top.Base = base
 	}
 	if testFolder {
-		log.Printf("botmemory: bootstrap test-folder mode — using throwaway folder %q only; do not use as production vault", TestRootFolderName)
+		log.Printf("botoptimizer: bootstrap test-folder mode — using throwaway folder %q only; do not use as production vault", TestRootFolderName)
 		id, err := top.folderID(ctx, TestRootFolderName, false)
 		if errors.Is(err, store.ErrNotFound) {
 			id, err = top.folderID(ctx, TestRootFolderName, true)

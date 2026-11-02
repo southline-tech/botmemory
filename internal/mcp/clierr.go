@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/usage"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/usage"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 // ExitCode maps vault errors to bot CLI exit codes.

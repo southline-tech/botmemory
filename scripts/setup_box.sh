@@ -9,13 +9,13 @@
 # gitignored .env (mode 600) that you restore yourself.
 #
 # Env (all optional):
-#   BOTMEMORY_BIN           output binary   (default $HOME/.local/bin/botmemory); if set, must be absolute
-#   BOTMEMORY_ROOT_ID_FILE  root id file    (default $HOME/.config/botmemory/drive_root_id)
+#   BOTOPTIMIZER_BIN           output binary   (default $HOME/.local/bin/botoptimizer); if set, must be absolute
+#   BOTOPTIMIZER_ROOT_ID_FILE  root id file    (default $HOME/.config/botoptimizer/drive_root_id)
 #   GO_INSTALL_DIR         where Go goes   (default $HOME/.local/go)
 #
-# Disposable Drive root for smoke/tests: run `botmemory bootstrap --test-folder`
-# (or BOTMEMORY_TEST_FOLDER=1) and save the printed BOTMEMORY_DRIVE_ROOT_ID;
-# set BOTMEMORY_SMOKE_TEST_ROOT=1 when pointing scripts/smoke_drive.py at it.
+# Disposable Drive root for smoke/tests: run `botoptimizer bootstrap --test-folder`
+# (or BOTOPTIMIZER_TEST_FOLDER=1) and save the printed BOTOPTIMIZER_DRIVE_ROOT_ID;
+# set BOTOPTIMIZER_SMOKE_TEST_ROOT=1 when pointing scripts/smoke_drive.py at it.
 set -euo pipefail
 
 say() { printf '%s\n' "$*"; }
@@ -25,11 +25,11 @@ REPO=$(pwd)
 RUN_TESTS=0
 [[ "${1:-}" == "--test" ]] && RUN_TESTS=1
 
-BIN=${BOTMEMORY_BIN:-$HOME/.local/bin/botmemory}
-if [[ -n "${BOTMEMORY_BIN:-}" && "$BIN" != /* ]]; then
-	say "BOTMEMORY_BIN must be an absolute path (got: $BIN)"; exit 1
+BIN=${BOTOPTIMIZER_BIN:-$HOME/.local/bin/botoptimizer}
+if [[ -n "${BOTOPTIMIZER_BIN:-}" && "$BIN" != /* ]]; then
+	say "BOTOPTIMIZER_BIN must be an absolute path (got: $BIN)"; exit 1
 fi
-ROOT_ID_FILE=${BOTMEMORY_ROOT_ID_FILE:-$HOME/.config/botmemory/drive_root_id}
+ROOT_ID_FILE=${BOTOPTIMIZER_ROOT_ID_FILE:-$HOME/.config/botoptimizer/drive_root_id}
 GO_DIR=${GO_INSTALL_DIR:-$HOME/.local/go}
 WANT_GO=$(awk '/^go /{print $2}' go.mod)
 fail=0
@@ -68,7 +68,7 @@ fi
 
 # 2. Build.
 mkdir -p "$(dirname "$BIN")"
-go build -trimpath -o "$BIN" ./cmd/botmemory
+go build -trimpath -o "$BIN" ./cmd/botoptimizer
 say "build: $BIN ($(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
 
 # 3. Optional tests, one package at a time (the box is shared).
@@ -89,33 +89,33 @@ if [[ -f .env ]]; then
 	fi
 fi
 check() { if [[ -n "${!1:-}" ]]; then say "env $1: set"; else say "env $1: MISSING"; fail=1; fi; }
-if [[ "${BOTMEMORY_BACKEND:-drive}" == "drive" ]]; then
-	if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -z "${BOTMEMORY_OAUTH_REFRESH_TOKEN:-}" ]]; then
+if [[ "${BOTOPTIMIZER_BACKEND:-drive}" == "drive" ]]; then
+	if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -z "${BOTOPTIMIZER_OAUTH_REFRESH_TOKEN:-}" ]]; then
 		say "env GOOGLE_APPLICATION_CREDENTIALS: set (ADC)"
 	else
-		check BOTMEMORY_OAUTH_CLIENT_ID; check BOTMEMORY_OAUTH_CLIENT_SECRET; check BOTMEMORY_OAUTH_REFRESH_TOKEN
+		check BOTOPTIMIZER_OAUTH_CLIENT_ID; check BOTOPTIMIZER_OAUTH_CLIENT_SECRET; check BOTOPTIMIZER_OAUTH_REFRESH_TOKEN
 	fi
 else
-	say "env BOTMEMORY_BACKEND=${BOTMEMORY_BACKEND} (no Drive credentials needed)"
+	say "env BOTOPTIMIZER_BACKEND=${BOTOPTIMIZER_BACKEND} (no Drive credentials needed)"
 fi
 
 # 5. Drive root id: env wins; otherwise the root id file. (Not a secret.)
-if [[ "${BOTMEMORY_BACKEND:-drive}" == "drive" ]]; then
-	if [[ -n "${BOTMEMORY_DRIVE_ROOT_ID:-}" ]]; then
+if [[ "${BOTOPTIMIZER_BACKEND:-drive}" == "drive" ]]; then
+	if [[ -n "${BOTOPTIMIZER_DRIVE_ROOT_ID:-}" ]]; then
 		if [[ ! -s "$ROOT_ID_FILE" ]]; then
-			mkdir -p "$(dirname "$ROOT_ID_FILE")"; umask 077; printf '%s\n' "$BOTMEMORY_DRIVE_ROOT_ID" >"$ROOT_ID_FILE"
+			mkdir -p "$(dirname "$ROOT_ID_FILE")"; umask 077; printf '%s\n' "$BOTOPTIMIZER_DRIVE_ROOT_ID" >"$ROOT_ID_FILE"
 			say "root id: saved to $ROOT_ID_FILE"
-		elif [[ "$(tr -d '[:space:]' <"$ROOT_ID_FILE")" != "$BOTMEMORY_DRIVE_ROOT_ID" ]]; then
+		elif [[ "$(tr -d '[:space:]' <"$ROOT_ID_FILE")" != "$BOTOPTIMIZER_DRIVE_ROOT_ID" ]]; then
 			say "root id: env and $ROOT_ID_FILE DIFFER; refusing to guess which vault you mean"; fail=1
 		else
 			say "root id: env matches $ROOT_ID_FILE"
 		fi
 	elif [[ -s "$ROOT_ID_FILE" ]]; then
-		say "root id: from $ROOT_ID_FILE; run with: export BOTMEMORY_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\""
+		say "root id: from $ROOT_ID_FILE; run with: export BOTOPTIMIZER_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\""
 	else
-		say "root id: MISSING; run \`$BIN bootstrap\` once (prints BOTMEMORY_DRIVE_ROOT_ID), or \`$BIN bootstrap --test-folder\` for a throwaway smoke root; then save it to $ROOT_ID_FILE"; fail=1
+		say "root id: MISSING; run \`$BIN bootstrap\` once (prints BOTOPTIMIZER_DRIVE_ROOT_ID), or \`$BIN bootstrap --test-folder\` for a throwaway smoke root; then save it to $ROOT_ID_FILE"; fail=1
 	fi
 fi
 
 if (( fail )); then say "setup: INCOMPLETE (see MISSING/refusing lines above)"; exit 1; fi
-say "setup: ok; start with: BOTMEMORY_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\" $BIN serve"
+say "setup: ok; start with: BOTOPTIMIZER_DRIVE_ROOT_ID=\"\$(cat $ROOT_ID_FILE)\" $BIN serve"

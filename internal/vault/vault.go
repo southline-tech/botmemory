@@ -1,4 +1,4 @@
-// Package vault implements botMemory record semantics on top of a store.Backend:
+// Package vault implements BotOptimizer Memory record semantics on top of a store.Backend:
 // validation, ACL checks, write attribution, versioning with history copies,
 // optimistic concurrency (if_version), append, and soft delete (archive).
 package vault
@@ -16,15 +16,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 var (
-	ErrForbidden = errors.New("forbidden")
-	ErrConflict  = errors.New("version conflict")
-	ErrNotFound  = errors.New("not found")
-	ErrInvalid   = errors.New("invalid argument")
+	ErrForbidden   = errors.New("forbidden")
+	ErrConflict    = errors.New("version conflict")
+	ErrNotFound    = errors.New("not found")
+	ErrInvalid     = errors.New("invalid argument")
+	ErrKindInvalid = errors.New("invalid kind")
 	// ErrCorrupt marks a stored record that exists but cannot be parsed.
 	ErrCorrupt = errors.New("corrupt record")
 	// ErrMarker: the durable index-dirty marker could not be written, so the
@@ -33,7 +34,7 @@ var (
 )
 
 // Kinds is the closed set of record kinds (spec: strict kinds).
-var Kinds = []string{"decision", "spec", "handoff", "assignment", "note"}
+var Kinds = []string{"decision", "spec", "handoff", "assignment", "note", "usage"}
 
 const StatusArchived = "archived"
 
@@ -213,7 +214,7 @@ func (v *Vault) commit(ctx context.Context, op string, prev, next *Record, proje
 	// Record is durable; index and log are derived. Don't fail the write
 	// (the caller would retry and hit CONFLICT); log it. Recover with reindex.
 	if err := v.afterWrite(ctx, op, project, next, &indexOK); err != nil {
-		log.Printf("botmemory: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
+		log.Printf("botoptimizer: %s %s/%s v%d saved but derived update failed: %v", op, project, next.Key, next.Version, err)
 	}
 	return nil
 }
@@ -345,9 +346,24 @@ func (v *Vault) Put(ctx context.Context, bot string, in PutInput) (*Record, erro
 	return next, nil
 }
 
+func validAppendKind(kind string) error {
+	switch kind {
+	case "note", "handoff", "spec", "decision", "usage":
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrKindInvalid, kind)
+	}
+}
+
 // Append adds text to an existing record's body without a version check
 // (spec: lock-free for callers; serialized server-side by the per-key lock).
-func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Record, error) {
+func (v *Vault) Append(ctx context.Context, bot, project, key, text, kind string) (*Record, error) {
+	if kind == "" {
+		kind = "note"
+	}
+	if err := validAppendKind(kind); err != nil {
+		return nil, err
+	}
 	if err := v.checkAddr(project, key); err != nil {
 		return nil, err
 	}
@@ -363,7 +379,7 @@ func (v *Vault) Append(ctx context.Context, bot, project, key, text string) (*Re
 	if errors.Is(err, ErrNotFound) {
 		now := v.now()
 		next := &Record{
-			Key: key, Kind: "note", Title: "", Body: text,
+			Key: key, Kind: kind, Title: "", Body: text,
 			Tags: []string{}, Links: []string{}, Status: "active",
 			Version: 1, CreatedBy: bot, CreatedAt: now, UpdatedBy: bot, UpdatedAt: now,
 		}

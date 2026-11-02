@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 // Backend stores vault files under Root with mode 0600 files and 0700 dirs.

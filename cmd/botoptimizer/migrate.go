@@ -8,13 +8,13 @@ import (
 	"path"
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/drive"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/store/local"
+	"github.com/southline-tech/botoptimizer/internal/drive"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store/local"
 )
 
 const migrateUsage = `usage:
-  botmemory migrate --from local --to drive [--dry-run] [--force] [--delete-source]
+  botoptimizer migrate --from local --to drive [--dry-run] [--force] [--delete-source]
 Copies vault files from local disk to Google Drive. Drive→local is not supported.
 Refuses a nonempty Drive vault unless --force. Source is kept unless --delete-source.`
 
@@ -76,15 +76,15 @@ func migrateMain(args []string) error {
 		}
 		rootID := env("DRIVE_ROOT_ID")
 		if rootID != "" {
-			fmt.Fprintf(os.Stdout, "dry-run: %d files (destination BOTMEMORY_DRIVE_ROOT_ID=%s)\n", n, rootID)
+			fmt.Fprintf(os.Stdout, "dry-run: %d files (destination BOTOPTIMIZER_DRIVE_ROOT_ID=%s)\n", n, rootID)
 		} else {
-			fmt.Fprintf(os.Stdout, "dry-run: %d files (set BOTMEMORY_DRIVE_ROOT_ID before real migrate)\n", n)
+			fmt.Fprintf(os.Stdout, "dry-run: %d files (set BOTOPTIMIZER_DRIVE_ROOT_ID before real migrate)\n", n)
 		}
 		return nil
 	}
 	rootID := env("DRIVE_ROOT_ID")
 	if rootID == "" {
-		return fmt.Errorf("INVALID: BOTMEMORY_DRIVE_ROOT_ID required for migrate (not dry-run)")
+		return fmt.Errorf("INVALID: BOTOPTIMIZER_DRIVE_ROOT_ID required for migrate (not dry-run)")
 	}
 	hc, err := driveClient(ctx)
 	if err != nil {

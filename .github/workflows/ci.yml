@@ -30,4 +30,4 @@ jobs:
       - name: go test -race
         run: go test -race ./...
       - name: windows build
-        run: GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/botmemory
+        run: GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/botoptimizer

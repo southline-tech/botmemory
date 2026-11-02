@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 const folderMime = "application/vnd.google-apps.folder"

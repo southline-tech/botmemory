@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 // Path is the ACL document's path relative to the vault root.
@@ -205,7 +205,7 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 			return ok && !b.Revoked && b.Roles[project] == role && (!mint || b.TokenSHA256 == hash)
 		}); verr != nil {
 			if mint {
-				return GrantResult{}, fmt.Errorf("%w; token file kept at %s (harmless if its hash is absent): run `botmemory acl list`", verr, opts.TokenOut)
+				return GrantResult{}, fmt.Errorf("%w; token file kept at %s (harmless if its hash is absent): run `botoptimizer acl list`", verr, opts.TokenOut)
 			}
 			return GrantResult{}, verr
 		}
@@ -231,7 +231,7 @@ func (a *Admin) Grant(ctx context.Context, bot, project, role string, opts Grant
 	if rerr != nil {
 		why = "re-read failed: " + rerr.Error()
 	}
-	return GrantResult{}, fmt.Errorf("%w: write failed (%v) and %s; token file kept at %s — later run `botmemory acl list`: if %s shows the grant the token is live, otherwise delete the file", ErrOutcomeUnknown, wu.err, why, opts.TokenOut, bot)
+	return GrantResult{}, fmt.Errorf("%w: write failed (%v) and %s; token file kept at %s — later run `botoptimizer acl list`: if %s shows the grant the token is live, otherwise delete the file", ErrOutcomeUnknown, wu.err, why, opts.TokenOut, bot)
 }
 
 // verify re-reads the ACL after an acknowledged write and checks ok.
@@ -290,7 +290,7 @@ func (a *Admin) Revoke(ctx context.Context, bot string, force bool) error {
 		if a.verify(ctx, revoked) == nil {
 			return nil
 		}
-		return fmt.Errorf("%w: write failed (%v); run `botmemory acl list` later to see whether %s is revoked", ErrOutcomeUnknown, wu.err, bot)
+		return fmt.Errorf("%w: write failed (%v); run `botoptimizer acl list` later to see whether %s is revoked", ErrOutcomeUnknown, wu.err, bot)
 	}
 	if err != nil {
 		return err
@@ -320,7 +320,7 @@ func (a *Admin) Remove(ctx context.Context, bot string, force bool) error {
 		if a.verify(ctx, gone) == nil {
 			return nil
 		}
-		return fmt.Errorf("%w: write failed (%v); run `botmemory acl list` later to see whether %s is still present", ErrOutcomeUnknown, wu.err, bot)
+		return fmt.Errorf("%w: write failed (%v); run `botoptimizer acl list` later to see whether %s is still present", ErrOutcomeUnknown, wu.err, bot)
 	}
 	if err != nil {
 		return err

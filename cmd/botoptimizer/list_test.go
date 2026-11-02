@@ -5,10 +5,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/mcp"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func TestListIfEtagDefaultProject(t *testing.T) {
@@ -20,9 +20,9 @@ func TestListIfEtagDefaultProject(t *testing.T) {
 	f := func() *acl.ACL { return a }
 	srv := httptest.NewServer(&mcp.Server{V: vault.New(store.NewMemory(), f), ACL: f})
 	t.Cleanup(srv.Close)
-	t.Setenv("BOTMEMORY_TOKEN", "tok")
-	t.Setenv("BOTMEMORY_URL", srv.URL)
-	t.Setenv("BOTMEMORY_PROJECT", "p")
+	t.Setenv("BOTOPTIMIZER_TOKEN", "tok")
+	t.Setenv("BOTOPTIMIZER_URL", srv.URL)
+	t.Setenv("BOTOPTIMIZER_PROJECT", "p")
 	cliFlags, _, err := parseBotFlags(nil)
 	if err != nil {
 		t.Fatal(err)

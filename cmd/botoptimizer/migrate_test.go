@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/store/local"
+	"github.com/southline-tech/botoptimizer/internal/store/local"
 )
 
 func TestMigrateDryRunLocalOnly(t *testing.T) {
@@ -24,8 +24,8 @@ func TestMigrateDryRunLocalOnly(t *testing.T) {
 	if err := b.Write(ctx, "projects/demo/records/k.json", []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("BOTMEMORY_DATA_DIR", dir)
-	t.Setenv("BOTMEMORY_DRIVE_ROOT_ID", "")
+	t.Setenv("BOTOPTIMIZER_DATA_DIR", dir)
+	t.Setenv("BOTOPTIMIZER_DRIVE_ROOT_ID", "")
 	r, w, _ := os.Pipe()
 	oldOut := os.Stdout
 	os.Stdout = w

@@ -1,9 +1,9 @@
-// Command botmemory runs the botMemory MCP server.
+// Command botoptimizer runs the botMemory MCP server.
 //
-//	botmemory serve          # serve MCP over HTTP (see .env.example)
-//	botmemory bootstrap      # create the botMemory root folder in Drive, print its id
-//	botmemory mint-token BOT # print a new token + the hash to put in _acl.json
-//	botmemory acl grant|revoke|list  # edit _acl.json (see aclcmd.go)
+//	botoptimizer serve          # serve MCP over HTTP (see .env.example)
+//	botoptimizer bootstrap      # create the botMemory root folder in Drive, print its id
+//	botoptimizer mint-token BOT # print a new token + the hash to put in _acl.json
+//	botoptimizer acl grant|revoke|list  # edit _acl.json (see aclcmd.go)
 package main
 
 import (
@@ -22,23 +22,26 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/drive"
-	"github.com/southline-tech/botmemory/internal/instance"
-	"github.com/southline-tech/botmemory/internal/mcp"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/drive"
+	"github.com/southline-tech/botoptimizer/internal/instance"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 const driveScope = "https://www.googleapis.com/auth/drive.file"
 
 func main() {
+	if maybePrintHelp(os.Args) {
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Printf("botmemory %s\n", Version)
+		fmt.Printf("botoptimizer %s\n", Version)
 		return
 	}
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: botmemory serve | stdio | migrate | projects|list|get|… | bootstrap | mint-token | acl …")
+		fmt.Fprintln(os.Stderr, "usage: botoptimizer serve | stdio | migrate | projects|list|get|… | bootstrap | mint-token | acl …")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -77,7 +80,7 @@ func main() {
 		}
 	case "mint-token":
 		if len(os.Args) != 3 {
-			log.Fatal("usage: botmemory mint-token BOT_ID")
+			log.Fatal("usage: botoptimizer mint-token BOT_ID")
 		}
 		tok, hash, err := acl.NewToken()
 		if err != nil {
@@ -93,7 +96,7 @@ func main() {
 			log.Fatal(err)
 		}
 	case "version":
-		fmt.Printf("botmemory %s\n", Version)
+		fmt.Printf("botoptimizer %s\n", Version)
 	case "ping":
 		if err := runBotPing(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
@@ -136,7 +139,7 @@ func main() {
 			if s := strings.TrimSpace(env("WARM_INTERVAL")); s != "" {
 				d, err := time.ParseDuration(s)
 				if err != nil {
-					log.Fatalf("BOTMEMORY_WARM_INTERVAL: %v", err)
+					log.Fatalf("BOTOPTIMIZER_WARM_INTERVAL: %v", err)
 				}
 				warmEvery = d
 			}
@@ -196,7 +199,7 @@ func runServer(stdio bool, storageFlag, dataDirFlag string, warmEvery time.Durat
 		return err
 	}
 	lp := lockPath(rootKey)
-	log.Printf("botmemory single-instance lock: %s", lp)
+	log.Printf("botoptimizer single-instance lock: %s", lp)
 	lk, err := instance.Acquire(lp)
 	if err != nil {
 		return err
@@ -204,17 +207,17 @@ func runServer(stdio bool, storageFlag, dataDirFlag string, warmEvery time.Durat
 	defer lk.Release()
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", srv)
-	log.Printf("botmemory listening on http://%s/mcp", addr)
+	log.Printf("botoptimizer listening on http://%s/mcp", addr)
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	return hs.ListenAndServe()
 }
 
 // bootstrap creates (or finds) the app's root folder under drive.file and
-// prints its id. If BOTMEMORY_DRIVE_ROOT_ID is already set it does nothing.
+// prints its id. If BOTOPTIMIZER_DRIVE_ROOT_ID is already set it does nothing.
 func bootstrap(ctx context.Context, testFolder bool) error {
 	if id := env("DRIVE_ROOT_ID"); id != "" {
-		fmt.Printf("BOTMEMORY_DRIVE_ROOT_ID already set (%s); nothing to do\n", id)
+		fmt.Printf("BOTOPTIMIZER_DRIVE_ROOT_ID already set (%s); nothing to do\n", id)
 		return nil
 	}
 	hc, err := driveClient(ctx)
@@ -225,18 +228,18 @@ func bootstrap(ctx context.Context, testFolder bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("BOTMEMORY_DRIVE_ROOT_ID=%s\n", id)
+	fmt.Printf("BOTOPTIMIZER_DRIVE_ROOT_ID=%s\n", id)
 	if testFolder {
-		fmt.Println("test-folder bootstrap: save this id for smoke/tests only; set BOTMEMORY_SMOKE_TEST_ROOT=1 when using scripts/smoke_drive.py against it")
+		fmt.Println("test-folder bootstrap: save this id for smoke/tests only; set BOTOPTIMIZER_SMOKE_TEST_ROOT=1 when using scripts/smoke_drive.py against it")
 	}
 	if seeded {
-		fmt.Println("seeded empty _acl.json (deny all); add bots with `botmemory mint-token`")
+		fmt.Println("seeded empty _acl.json (deny all); add bots with `botoptimizer mint-token`")
 	}
 	return nil
 }
 
 // bootstrapTestFolder is true when --test-folder is passed (wins) or
-// BOTMEMORY_TEST_FOLDER is a truthy value (1/true/yes, case-insensitive).
+// BOTOPTIMIZER_TEST_FOLDER is a truthy value (1/true/yes, case-insensitive).
 func bootstrapTestFolder(args []string) bool {
 	for _, a := range args {
 		if a == "--test-folder" {
@@ -256,7 +259,7 @@ func driveClient(ctx context.Context) (*http.Client, error) {
 	} else {
 		creds, err := google.FindDefaultCredentials(ctx, driveScope)
 		if err != nil {
-			return nil, fmt.Errorf("no Drive credentials (set BOTMEMORY_OAUTH_* or ADC): %w", err)
+			return nil, fmt.Errorf("no Drive credentials (set BOTOPTIMIZER_OAUTH_* or ADC): %w", err)
 		}
 		ts = creds.TokenSource
 	}
@@ -267,11 +270,11 @@ func driveClient(ctx context.Context) (*http.Client, error) {
 func checkAddr(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("BOTMEMORY_ADDR %q: %w", addr, err)
+		return fmt.Errorf("BOTOPTIMIZER_ADDR %q: %w", addr, err)
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("BOTMEMORY_ADDR %q: refusing non-loopback bind (use 127.0.0.1)", addr)
+		return fmt.Errorf("BOTOPTIMIZER_ADDR %q: refusing non-loopback bind (use 127.0.0.1)", addr)
 	}
 	return nil
 }
@@ -287,13 +290,13 @@ func normalizeAddr(addr string) string {
 
 // lockPath is fixed per vault, not per environment: every instance serving
 // the same Drive root (or memory) contends on the same file regardless of
-// TMPDIR/XDG_RUNTIME_DIR. BOTMEMORY_LOCK_FILE overrides.
+// TMPDIR/XDG_RUNTIME_DIR. BOTOPTIMIZER_LOCK_FILE overrides.
 // The guard holds for one host only; it cannot see a server on another host.
 func lockPath(rootID string) string {
 	if p := env("LOCK_FILE"); p != "" {
 		return p
 	}
-	return "/var/tmp/botmemory-" + rootHash(rootID) + ".lock"
+	return "/var/tmp/botoptimizer-" + rootHash(rootID) + ".lock"
 }
 
 func rootHash(rootID string) string {

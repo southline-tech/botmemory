@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 func TestIndexAndLogMaintained(t *testing.T) {
@@ -21,7 +21,7 @@ func TestIndexAndLogMaintained(t *testing.T) {
 	if _, err := v.Put(ctx, "pm", PutInput{Project: "vc", Key: "a", Title: "Alpha", Body: long, Tags: []string{"x"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := v.Append(ctx, "impl", "vc", "a", "more"); err != nil {
+	if _, err := v.Append(ctx, "impl", "vc", "a", "more", "note"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.Delete(ctx, "pm", "vc", "a", iv(2)); err != nil {

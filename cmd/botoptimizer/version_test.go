@@ -10,20 +10,20 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/mcp"
-	"github.com/southline-tech/botmemory/internal/store"
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func TestVersionNoNetwork(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "botmemory")
+	bin := filepath.Join(dir, "botoptimizer")
 	root, err := filepath.Abs(filepath.Join(".", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/botmemory")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/botoptimizer")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v %s", err, out)
@@ -32,7 +32,7 @@ func TestVersionNoNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "botmemory") {
+	if !strings.Contains(string(out), "botoptimizer") {
 		t.Fatalf("%q", out)
 	}
 }
@@ -42,8 +42,8 @@ func TestPingCLI(t *testing.T) {
 	f := func() *acl.ACL { return a }
 	srv := httptest.NewServer(&mcp.Server{V: vault.New(store.NewMemory(), f), ACL: f})
 	t.Cleanup(srv.Close)
-	t.Setenv("BOTMEMORY_TOKEN", "tok")
-	t.Setenv("BOTMEMORY_URL", srv.URL)
+	t.Setenv("BOTOPTIMIZER_TOKEN", "tok")
+	t.Setenv("BOTOPTIMIZER_URL", srv.URL)
 	if err := runBotPing(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestPrePingDefault(t *testing.T) {
 	f := func() *acl.ACL { return a }
 	srv := httptest.NewServer(&mcp.Server{V: vault.New(store.NewMemory(), f), ACL: f})
 	t.Cleanup(srv.Close)
-	os.Unsetenv("BOTMEMORY_PREPING")
+	os.Unsetenv("BOTOPTIMIZER_PREPING")
 	prePingOnce = sync.Once{}
 	c := &mcpClient{url: srv.URL, token: "tok", hc: srv.Client()}
 	if _, err := c.callTool(context.Background(), "stats", map[string]any{}); err != nil {

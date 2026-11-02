@@ -3,7 +3,7 @@ package usage
 import (
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/vault"
+	"github.com/southline-tech/botoptimizer/internal/vault"
 )
 
 func LogKey(bot string) (string, error) {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/southline-tech/botmemory/internal/acl"
-	"github.com/southline-tech/botmemory/internal/store"
+	"github.com/southline-tech/botoptimizer/internal/acl"
+	"github.com/southline-tech/botoptimizer/internal/store"
 )
 
 const summaryLen = 500
@@ -176,7 +176,7 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (id
 				v.putIndexCache(project, &idx)
 				return cloneIndex(&idx), false, nil
 			}
-			log.Printf("botmemory: %s: corrupt index; rebuilding from records", project)
+			log.Printf("botoptimizer: %s: corrupt index; rebuilding from records", project)
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, false, err
 		}
@@ -188,9 +188,9 @@ func (v *Vault) loadIndex(ctx context.Context, project string, rebuild bool) (id
 	}
 	if err := v.saveIndex(ctx, project, idx); err != nil {
 		v.dirty.Store(project, true)
-		log.Printf("botmemory: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
+		log.Printf("botoptimizer: %s: saving rebuilt index failed (will rebuild again): %v", project, err)
 	} else if err := v.clearDirty(ctx, project); err != nil {
-		log.Printf("botmemory: %s: %v (will rebuild again)", project, err)
+		log.Printf("botoptimizer: %s: %v (will rebuild again)", project, err)
 	} else {
 		v.putIndexCache(project, idx)
 	}
@@ -216,7 +216,7 @@ func (v *Vault) rebuildIndex(ctx context.Context, project string) (*Index, []str
 		}
 		r, err := v.load(ctx, path.Join(dir, n))
 		if errors.Is(err, ErrCorrupt) {
-			log.Printf("botmemory: %s: skipping unparseable record %s in index rebuild: %v", project, n, err)
+			log.Printf("botoptimizer: %s: skipping unparseable record %s in index rebuild: %v", project, n, err)
 			skipped = append(skipped, n)
 			continue
 		}
@@ -346,7 +346,7 @@ func (v *Vault) Search(ctx context.Context, bot, project, query string, f ListFi
 				return nil, err
 			}
 			// One unreadable project must not fail a cross-project search.
-			log.Printf("botmemory: search: skipping project %s: %v", p, err)
+			log.Printf("botoptimizer: search: skipping project %s: %v", p, err)
 			continue
 		}
 		for _, e := range idx.Entries {

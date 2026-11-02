@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/southline-tech/botmemory/internal/usage"
+	"github.com/southline-tech/botoptimizer/internal/usage"
 )
 
 func TestParseCSVMapFlag(t *testing.T) {

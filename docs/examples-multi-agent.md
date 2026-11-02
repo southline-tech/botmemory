@@ -28,36 +28,36 @@ Keys use dots only — **no `/`** in key names (`feedback.slug.date`, not `feedb
 | `stats` | `{}` | `{}` | `{}` |
 | `delete` | forbidden | forbidden | `{"project":"shipit","key":"…"}` (owner) |
 
-Omit `project` when the bot token has ACL `default_project` set (`botmemory acl grant … --default-project shipit`).
+Omit `project` when the bot token has ACL `default_project` set (`botoptimizer acl grant … --default-project shipit`).
 
 ## CLI one-liners
 
-Assume `BOTMEMORY_TOKEN_FILE` and `BOTMEMORY_PROJECT=shipit` (or `--project shipit`).
+Assume `BOTOPTIMIZER_TOKEN_FILE` and `BOTOPTIMIZER_PROJECT=shipit` (or `--project shipit`).
 
 ```sh
-botmemory brief
-botmemory changed --since 2026-11-01T00:00:00Z
-botmemory get spec.feature --head 40
-botmemory put spec.feature --title "Feature" --body "…" --kind spec
-botmemory append log.impl --text "- shipped slice 1"
-botmemory search "blocker" --limit 10
-botmemory stats
+botoptimizer brief
+botoptimizer changed --since 2026-11-01T00:00:00Z
+botoptimizer get spec.feature --head 40
+botoptimizer put spec.feature --title "Feature" --body "…" --kind spec
+botoptimizer append log.impl --text "- shipped slice 1"
+botoptimizer search "blocker" --limit 10
+botoptimizer stats
 ```
 
-Compact JSON on stdout; `--human` or `BOTMEMORY_HUMAN=1` for indented output. Errors on stderr: `CODE: message; hint: …` with exit codes 3=NOT_FOUND, 4=FORBIDDEN, 5=CONFLICT, 6=INVALID.
+Compact JSON on stdout; `--human` or `BOTOPTIMIZER_HUMAN=1` for indented output. Errors on stderr: `CODE: message; hint: …` with exit codes 3=NOT_FOUND, 4=FORBIDDEN, 5=CONFLICT, 6=INVALID.
 
 ## Stdio MCP (one process per bot)
 
 ```json
 {
   "mcpServers": {
-    "botmemory-implementor": {
-      "command": "/path/to/botmemory",
+    "botoptimizer-implementor": {
+      "command": "/path/to/botoptimizer",
       "args": ["stdio"],
       "env": {
-        "BOTMEMORY_TOKEN_FILE": "/secure/implementor.token",
-        "BOTMEMORY_PROJECT": "shipit",
-        "BOTMEMORY_BACKEND": "local"
+        "BOTOPTIMIZER_TOKEN_FILE": "/secure/implementor.token",
+        "BOTOPTIMIZER_PROJECT": "shipit",
+        "BOTOPTIMIZER_BACKEND": "local"
       }
     }
   }

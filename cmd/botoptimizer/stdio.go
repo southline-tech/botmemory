@@ -9,13 +9,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/southline-tech/botmemory/internal/mcp"
+	"github.com/southline-tech/botoptimizer/internal/mcp"
 )
 
 func runStdio(s *mcp.Server) error {
-	tok := strings.TrimSpace(os.Getenv("BOTMEMORY_TOKEN"))
+	tok := strings.TrimSpace(os.Getenv("BOTOPTIMIZER_TOKEN"))
 	if tok == "" {
-		if f := strings.TrimSpace(os.Getenv("BOTMEMORY_TOKEN_FILE")); f != "" {
+		if f := strings.TrimSpace(os.Getenv("BOTOPTIMIZER_TOKEN_FILE")); f != "" {
 			b, err := os.ReadFile(f)
 			if err != nil {
 				return err
@@ -24,7 +24,7 @@ func runStdio(s *mcp.Server) error {
 		}
 	}
 	if tok == "" {
-		return fmt.Errorf("BOTMEMORY_TOKEN or BOTMEMORY_TOKEN_FILE is required for stdio")
+		return fmt.Errorf("BOTOPTIMIZER_TOKEN or BOTOPTIMIZER_TOKEN_FILE is required for stdio")
 	}
 	bot, err := s.ACL().Authenticate(tok)
 	if err != nil {
@@ -58,7 +58,7 @@ func runStdio(s *mcp.Server) error {
 			resp = map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{
 				"protocolVersion": "2025-06-18",
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "botmemory", "version": ver},
+				"serverInfo":      map[string]any{"name": "botoptimizer", "version": ver},
 			}}
 		case "ping":
 			resp = map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{}}
